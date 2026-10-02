@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Codespace Desktop</title><link rel="stylesheet" href="/style.css"><script type="module" src="/client.js"></script></head>
+<body>
+  <header><a class="brand" href="/">▣ <span>Codespace Desktop</span></a><span class="pill" id="connection">Disconnected</span></header>
+  <main>
+    <section class="intro" id="intro"><div class="eyebrow">YOUR MAC. ANYWHERE.</div><h1>A familiar desktop.<br>A lighter backpack.</h1><p>Connect to your Mac from this Codespaces page.<br>No Chromebook apps or extensions.</p></section>
+    <section class="card" id="login"><form id="connect-form"><label for="key">Viewer access key</label><div class="join"><input id="key" type="password" placeholder="Paste the viewer key from your Codespaces terminal" required autocomplete="off" spellcheck="false"><button type="submit">Connect to Mac <span>↗</span></button></div><p class="hint">Run <code>npm start</code> in Codespaces to find your key. Start the Mac host with the other key.</p></form></section>
+    <section id="desktop" hidden>
+      <div class="toolbar"><div><span class="dot"></span><strong id="mode-label">Waiting for Mac</strong><span class="muted" id="latency"></span></div><div class="actions"><label class="check"><input id="map-ctrl" type="checkbox" checked>Ctrl → ⌘</label><button class="quiet" id="escape">Esc</button><button class="quiet" id="cmd-tab">⌘ Tab</button><button class="quiet" id="fullscreen">Full screen</button><button class="quiet danger" id="disconnect">Disconnect</button></div></div>
+      <div id="screen" tabindex="0" aria-label="Remote Mac desktop. Click to focus, then use your keyboard and mouse."><video id="video" autoplay playsinline muted hidden></video><img id="frame" alt="Remote Mac screen" draggable="false" hidden><div id="placeholder"><div class="screen-icon">▣</div><h2>Ready when your Mac is.</h2><p>Open the Mac host and enter this page’s address<br>plus the Mac host key from Codespaces.</p></div></div>
+      <div class="foot"><span id="status" role="status">Waiting for your Mac…</span><label class="check"><input type="checkbox" id="relay">Use compatibility relay</label></div>
+    </section>
+    <section class="notes" id="notes"><div><span>01</span><h3>Start in Codespaces</h3><p>Run the server and open port 3000 in your browser. Set its visibility to Public.</p></div><div><span>02</span><h3>Connect your Mac</h3><p>Launch the Mac host. Enter the page address and your separate Mac host key.</p></div><div><span>03</span><h3>Make yourself at home</h3><p>Paste the viewer key here. Your Mac stays in control: closing its host ends access.</p></div></section>
+  </main><footer>Direct video when available. Compatibility relay when needed.<span>Keep your Mac awake and your Codespace running.</span></footer>
+</body></html>

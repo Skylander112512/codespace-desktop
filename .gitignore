@@ -1,0 +1,8 @@
+node_modules/
+.secrets.json
+.venv/
+__pycache__/
+dist/
+build/
+*.spec
+.DS_Store

@@ -1,0 +1,6 @@
+aiortc==1.15.0
+mss==10.2.0
+Pillow==12.3.0
+websockets==17.1
+certifi==2026.7.22
+pyobjc-framework-Quartz==12.2.2; sys_platform == 'darwin'
