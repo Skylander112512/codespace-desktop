@@ -294,11 +294,7 @@ def main():
             Quartz.CGRequestScreenCaptureAccess()
             print('Screen Recording permission is required. Enable this host / Terminal in System Settings → Privacy & Security → Screen & System Audio Recording, then restart it.')
             raise SystemExit(1)
-        if not Quartz.ApplicationServices.AXIsProcessTrusted():
-            Quartz.ApplicationServices.AXIsProcessTrustedWithOptions({Quartz.kAXTrustedCheckOptionPrompt:True})
-            print('Keyboard and mouse access is required. Enable this host / Terminal in System Settings → Privacy & Security → Accessibility, then restart it.')
-            raise SystemExit(1)
-    url=websocket_url(input('Codespaces viewer URL: '))
+        url=websocket_url(input('Codespaces viewer URL: '))
     key=getpass.getpass('Mac host key (hidden while typing): ').strip()
     if len(key)<32:raise SystemExit('Use the full Mac host key printed by npm start, not a GitHub token.')
     print('\nStarting foreground remote access with your host key. No automatic startup is installed.\n',flush=True)
