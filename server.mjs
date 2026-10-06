@@ -41,7 +41,10 @@ export function createDesktopServer({hostKey, viewerKey, iceServers = [{urls:'st
         valid &&= new URL(req.headers.origin).host === expected;
       } catch { valid = false; }
     }
-    if (!valid) { socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n'); return; }
+    if (!valid) {
+      log(`Upgrade rejected: ${JSON.stringify({origin:req.headers.origin,host:req.headers.host,forwardedHost:req.headers['x-forwarded-host'],remote:req.socket.remoteAddress})}`);
+      socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n'); return;
+    }
     wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws));
   });
   wss.on('connection', ws => {
