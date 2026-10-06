@@ -36,7 +36,7 @@ test('viewer stays on login until authenticated and retains a rejected key',()=>
 
 test('successful login clears key; later network failure remains visible',()=>{
   const b=browser(),ws=b.submit();ws.onopen();
-  ws.onmessage({data:JSON.stringify({type:'authenticated',version:'0.1.1'})});
+  ws.onmessage({data:JSON.stringify({type:'authenticated',version:'0.1.2'})});
   assert.equal(b.get('login').hidden,true);
   assert.equal(b.get('desktop').hidden,false);
   assert.equal(b.get('key').value,'');

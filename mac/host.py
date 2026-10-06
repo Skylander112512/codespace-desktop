@@ -20,7 +20,7 @@ from websockets.asyncio.client import connect
 import certifi
 from websockets.exceptions import ConnectionClosed, InvalidStatus
 
-VERSION = '0.1.1'
+VERSION = '0.1.2'
 
 
 class DirectConnect(connect):

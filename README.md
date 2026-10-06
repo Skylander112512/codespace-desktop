@@ -8,7 +8,7 @@ This is a working prototype, not a signed commercial remote-desktop product. It 
 
 Open [Skylander112512/codespace-desktop](https://github.com/Skylander112512/codespace-desktop) on the Chromebook. Select **Code → Codespaces** and open your existing Codespace, or create one on `main`.
 
-For an existing Codespace, stop `npm start` with Ctrl+C, then run `git pull --ff-only` before restarting it. Download the matching Mac host from the [latest release](https://github.com/Skylander112512/codespace-desktop/releases/latest). Version **0.1.1** fixes the old Mac startup crash and a relay disconnect on slow connections. Replace the old Mac folder, including its bundled executable; replacing only the launcher does not update the host.
+For an existing Codespace, stop `npm start` with Ctrl+C, then run `git pull --ff-only` before restarting it. Download the matching Mac host from the [latest release](https://github.com/Skylander112512/codespace-desktop/releases/latest). Version **0.1.2** fixes the Codespaces proxy rejecting browser connections, the old Mac startup crash, and a relay disconnect on slow connections. Replace the old Mac folder, including its bundled executable; replacing only the launcher does not update the host.
 
 ## 2. Start the server in Codespaces
 
@@ -44,6 +44,10 @@ Paste the **viewer key** into the Codespaces viewer page and select **Connect to
 
 **Disconnect** ends the viewer session. Stopping the Mac host with **Ctrl+C**, closing its Terminal window, or stopping Codespaces ends access. No background service or login item is installed. The host does not reconnect automatically after losing its server connection; restart it.
 
+## Confirmed Codespaces fix in 0.1.2
+
+The Codespaces tunnel rewrites browser WebSocket `Origin` and `Host` headers to `http://localhost:3000` / `localhost:3000`. The original server rejected those requests with HTTP 403, causing the viewer to immediately return to login. The server now accepts that exact rewrite only from the loopback tunnel, on the configured port, with the expected public `X-Forwarded-Host`. Other origins still fail, and both roles still require their separate keys.
+
 ## If the connection fails
 
 The viewer stays on the key form until the server accepts the key. A failed connection leaves a readable error and close code. **Connection details** records authentication, the first displayed frame, direct-video state, and disconnects without storing keys.
@@ -55,7 +59,7 @@ The viewer stays on the key form until the server accepts the key. A failed conn
 - **Screen capture failed:** enable Screen Recording for the launching host/Terminal and restart it.
 - **Video works but input does not:** enable Accessibility for the host/Terminal and restart it. The host reports when that permission is off.
 
-The Mac window now stays open on errors. Its timestamped messages show capture, first-frame delivery, ICE, and direct-video states. The Codespaces terminal records socket close codes. Version 0.1.1 appears in both the host banner and browser connection details.
+The Mac window now stays open on errors. Its timestamped messages show capture, first-frame delivery, ICE, and direct-video states. The Codespaces terminal records socket close codes. Version 0.1.2 appears in both the host banner and browser connection details.
 
 ## Latency and network behavior
 

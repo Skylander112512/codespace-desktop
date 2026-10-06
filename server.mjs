@@ -8,7 +8,7 @@ const root = new URL('./', import.meta.url);
 const equal = (a, b) => typeof a === 'string' && Buffer.byteLength(a) === Buffer.byteLength(b) && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 const send = (ws, msg) => { if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg)); };
 
-export function createDesktopServer({hostKey, viewerKey, iceServers = [{urls:'stun:stun.l.google.com:19302'}], publicOrigin, log = () => {}} = {}) {
+export function createDesktopServer({hostKey, viewerKey, iceServers = [{urls:'stun:stun.l.google.com:19302'}], publicOrigin, codespacesPort, log = () => {}} = {}) {
   if (!hostKey || !viewerKey || hostKey === viewerKey) throw new Error('Distinct host and viewer keys are required.');
   const assets = new Map([
     ['/', ['public/index.html','text/html; charset=utf-8']],
@@ -21,7 +21,7 @@ export function createDesktopServer({hostKey, viewerKey, iceServers = [{urls:'st
     const asset = assets.get(req.url);
     if (req.method === 'GET' && req.url === '/health') {
       res.writeHead(200, {...headers, 'Content-Type':'application/json'});
-      res.end(JSON.stringify({app:'codespace-desktop',version:'0.1.1'})); return;
+      res.end(JSON.stringify({app:'codespace-desktop',version:'0.1.2'})); return;
     }
     if (req.method !== 'GET' || !asset) { res.writeHead(404, headers); res.end('Not found'); return; }
     res.writeHead(200, {...headers, 'Content-Type':asset[1]});
@@ -37,8 +37,18 @@ export function createDesktopServer({hostKey, viewerKey, iceServers = [{urls:'st
     if (req.headers.origin) {
       // Browser connections must originate from this viewer, never another site.
       try {
-        const expected = publicOrigin ? new URL(publicOrigin).host : req.headers.host;
-        valid &&= new URL(req.headers.origin).host === expected;
+        const origin = new URL(req.headers.origin);
+        const expected = publicOrigin ? new URL(publicOrigin) : null;
+        const direct = expected ? origin.origin === expected.origin : origin.host === req.headers.host;
+        // Codespaces rewrites both Host and Origin to http://localhost:<port>.
+        // Only trust that rewrite from the local tunnel, for this exact port,
+        // with the configured public hostname in X-Forwarded-Host.
+        const loopback = ['127.0.0.1','::1','::ffff:127.0.0.1'].includes(req.socket.remoteAddress);
+        const localHost = `localhost:${codespacesPort}`;
+        const tunnel = Number.isInteger(codespacesPort) && expected && loopback &&
+          req.headers.host === localHost && origin.origin === `http://${localHost}` &&
+          req.headers['x-forwarded-host'] === expected.host;
+        valid &&= direct || tunnel;
       } catch { valid = false; }
     }
     if (!valid) {
@@ -78,7 +88,7 @@ export function createDesktopServer({hostKey, viewerKey, iceServers = [{urls:'st
         if (peers[candidate]) { ws.close(4009,`${candidate} already connected`); return; }
         clearTimeout(deadline); role=candidate; peers[role]=ws;
         log(`${role} authenticated`);
-        send(ws,{type:'authenticated',role,iceServers,version:'0.1.1'});
+        send(ws,{type:'authenticated',role,iceServers,version:'0.1.2'});
         if (peers.host && peers.viewer) {
           send(peers.viewer,{type:'host-ready'});
           send(peers.host,{type:'viewer-ready'});
@@ -117,7 +127,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const port=Number(process.env.PORT || 3000);
   const origin=process.env.PUBLIC_URL || (process.env.CODESPACE_NAME ? `https://${process.env.CODESPACE_NAME}-${port}.${process.env.GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN || 'app.github.dev'}` : `http://localhost:${port}`);
   const iceServers=process.env.ICE_SERVERS_JSON ? JSON.parse(process.env.ICE_SERVERS_JSON) : undefined;
-  const app=createDesktopServer({...keys,iceServers,publicOrigin:origin,log:message=>console.log(new Date().toISOString(),message)});
+  const app=createDesktopServer({...keys,iceServers,publicOrigin:origin,codespacesPort:process.env.CODESPACE_NAME ? port : undefined,log:message=>console.log(new Date().toISOString(),message)});
   app.server.listen(port,'0.0.0.0',() => {
     console.log(`\nCodespace Desktop\nViewer: ${origin}\n\nViewer key: ${keys.viewerKey}\nMac host key: ${keys.hostKey}\n\nKeep these keys private. They are NOT GitHub tokens.\nIn Codespaces: Ports → 3000 → Port Visibility → Public.\nThe public viewer page requires its access key; the Mac uses a separate key.\nStop with Ctrl+C.\n`);
   });
