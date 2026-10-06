@@ -18,6 +18,18 @@ from av import VideoFrame
 from PIL import Image, ImageDraw
 from websockets.asyncio.client import connect
 import certifi
+from websockets.exceptions import ConnectionClosed, InvalidStatus
+
+VERSION = '0.1.1'
+
+
+class DirectConnect(connect):
+    def process_redirect(self, exc):
+        return exc  # Never follow a GitHub sign-in redirect or send the key elsewhere.
+
+
+def log(message):
+    print(f'[{time.strftime("%H:%M:%S")}] {message}', flush=True)
 
 
 KEYS = dict(zip(
@@ -159,11 +171,15 @@ class ScreenTrack(VideoStreamTrack):
     def __init__(self,capture):
         super().__init__(); self.capture=capture; self.started=time.monotonic()
         self.next_frame=self.started
+        self.logged_first=False
 
     async def recv(self):
         await asyncio.sleep(max(0,self.next_frame-time.monotonic()))
         self.next_frame=max(self.next_frame+1/30,time.monotonic())
         frame=VideoFrame.from_image(await self.capture.image())
+        if not self.logged_first:
+            log(f'First WebRTC frame encoded from capture ({frame.width}×{frame.height}).')
+            self.logged_first=True
         frame.pts=int((time.monotonic()-self.started)*90000)
         frame.time_base=Fraction(1,90000)
         return frame
@@ -191,6 +207,7 @@ class Host:
     async def start_session(self):
         await self.end_session(); self.active=True
         print('Viewer connected. Close this window or press Ctrl+C to stop access.',flush=True)
+        await self.send({'type':'status','text':f'Mac host {VERSION} connected. Starting screen capture…'})
         self.tasks={asyncio.create_task(self.relay()),asyncio.create_task(self.negotiate())}
 
     async def negotiate(self):
@@ -198,6 +215,11 @@ class Host:
             servers=[RTCIceServer(**server) for server in self.ice_servers]
             pc=RTCPeerConnection(RTCConfiguration(iceServers=servers)); self.pc=pc
             pc.addTrack(ScreenTrack(self.capture))
+            log('Screen video track created; gathering direct connection candidates.')
+            @pc.on('iceconnectionstatechange')
+            def ice_state():log(f'ICE: {pc.iceConnectionState}')
+            @pc.on('icegatheringstatechange')
+            def ice_gathering():log(f'ICE gathering: {pc.iceGatheringState}')
             channel=pc.createDataChannel('control',ordered=True); self.channel=channel
             @channel.on('message')
             def data(message):
@@ -210,29 +232,42 @@ class Host:
                 except (ValueError,TypeError,KeyError):pass
             @pc.on('connectionstatechange')
             async def connection_state():
+                log(f'Direct video: {pc.connectionState}')
                 if pc.connectionState in ('failed','disconnected','closed'):
                     self.rtc=False; self.controls.release()
             await pc.setLocalDescription(await pc.createOffer())
             await self.send({'type':'offer','sdp':pc.localDescription.sdp,'iceServers':self.ice_servers})
         except asyncio.CancelledError:raise
+        except ConnectionClosed:return
         except Exception as error:
-            print(f'Direct connection unavailable: {type(error).__name__}. Relay remains available.',flush=True)
+            log(f'Direct connection unavailable: {type(error).__name__}: {error}. Relay remains available.')
             await self.send({'type':'status','text':'Direct connection unavailable. Using compatibility relay.'})
 
     async def relay(self):
         try:
+            first = True
+            reported_wait = False
             while self.active:
                 if self.rtc:
                     await asyncio.sleep(.15); continue
                 try:await asyncio.wait_for(self.ack.wait(),timeout=3)
-                except asyncio.TimeoutError:continue  # Wait, do not pile up old frames.
+                except asyncio.TimeoutError:
+                    if not reported_wait:
+                        log('Waiting for browser to acknowledge the screen frame. Check its connection details.')
+                        reported_wait = True
+                    continue  # Wait, do not pile up old frames.
+                reported_wait = False
                 frame=await self.capture.jpeg()
                 self.ack.clear()
                 await self.ws.send(frame)
+                if first:
+                    log(f'First screen frame sent ({len(frame)} bytes).')
+                    first = False
                 await asyncio.sleep(1/15)
         except asyncio.CancelledError:raise
+        except ConnectionClosed:return
         except Exception as error:
-            print(f'Screen capture failed: {type(error).__name__}',flush=True)
+            log(f'Screen capture failed: {type(error).__name__}: {error}')
             await self.send({'type':'status','text':'Mac screen capture failed. Check Screen Recording permission and restart the host.'})
 
     async def watchdog(self):
@@ -245,7 +280,9 @@ class Host:
         watchdog=asyncio.create_task(self.watchdog())
         try:
             tls=ssl.create_default_context(cafile=certifi.where()) if url.startswith('wss:') else None
-            async with connect(url,ssl=tls,max_size=256*1024,max_queue=8,compression=None,ping_interval=15,ping_timeout=15) as ws:
+            # A private Codespaces port redirects to GitHub sign-in. A standalone
+            # host cannot use the browser's login; report that instead of following it.
+            async with DirectConnect(url,ssl=tls,max_size=256*1024,max_queue=8,compression=None,ping_interval=15,ping_timeout=30) as ws:
                 self.ws=ws
                 await self.send({'type':'auth','role':'host','key':key})
                 async for raw in ws:
@@ -266,6 +303,16 @@ class Host:
                     elif kind=='frame-ack':self.ack.set()
                     elif kind=='mode':self.rtc=bool(msg.get('rtc')) and self.pc is not None and self.pc.connectionState=='connected'
                     elif kind=='ping':await self.send({'type':'pong','at':msg.get('at')})
+        except InvalidStatus as error:
+            code=error.response.status_code
+            if code in (301,302,303,307,308,401,403):
+                raise RuntimeError(f'Codespaces blocked the Mac connection (HTTP {code}). In Codespaces → Ports, set port 3000 visibility to Public, then restart this host.') from None
+            raise RuntimeError(f'Codespaces returned HTTP {code}. Run npm start and check port 3000.') from None
+        except ConnectionClosed as error:
+            close=error.rcvd or error.sent
+            code=close.code if close else 1006
+            reason=close.reason if close else 'Network connection lost'
+            raise RuntimeError(f'Connection closed ({code}): {reason}. Check the Codespaces terminal and restart the host.') from None
         finally:
             watchdog.cancel()
             with contextlib.suppress(asyncio.CancelledError):await watchdog
@@ -286,7 +333,7 @@ def main():
     parser=argparse.ArgumentParser(description='Codespace Desktop Mac host')
     parser.add_argument('--demo',action='store_true',help='Synthetic test screen; never reads or controls the real desktop')
     args=parser.parse_args()
-    print('\nCodespace Desktop — Mac host\nKeep this window open while connected. Ctrl+C stops access.\n')
+    print(f'\nCodespace Desktop — Mac host {VERSION}\nKeep this window open while connected. Ctrl+C stops access.\n')
     if not args.demo:
         if sys.platform!='darwin':raise SystemExit('This host requires macOS. Use --demo only for synthetic testing.')
         import Quartz
@@ -294,7 +341,9 @@ def main():
             Quartz.CGRequestScreenCaptureAccess()
             print('Screen Recording permission is required. Enable this host / Terminal in System Settings → Privacy & Security → Screen & System Audio Recording, then restart it.')
             raise SystemExit(1)
-        url=websocket_url(input('Codespaces viewer URL: '))
+        if hasattr(Quartz, 'CGPreflightPostEventAccess') and not Quartz.CGPreflightPostEventAccess():
+            print('Keyboard/mouse permission is OFF. Video can still work. Enable this host / Terminal in System Settings → Privacy & Security → Accessibility, then restart the host.\n')
+    url=websocket_url(input('Codespaces viewer URL: '))
     key=getpass.getpass('Mac host key (hidden while typing): ').strip()
     if len(key)<32:raise SystemExit('Use the full Mac host key printed by npm start, not a GitHub token.')
     print('\nStarting foreground remote access with your host key. No automatic startup is installed.\n',flush=True)

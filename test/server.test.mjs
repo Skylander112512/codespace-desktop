@@ -52,3 +52,23 @@ test('cross-origin socket rejected',async t=>{
   const ws=new WebSocket(base.replace('http','ws')+'/ws',{origin:'https://evil.example'});
   const [error]=await once(ws,'error');assert.match(error.message,/403/);
 });
+
+test('a queued JPEG does not close the viewer when a pong follows it', async t=>{
+  const {client}=await fixture(t);
+  const host=await client('host');const viewer=await client('viewer');
+  await until(()=>host.messages.some(m=>m.type==='viewer-ready'));
+  // Model a JPEG still in the server transport queue on a slow network.
+  const original=Object.getOwnPropertyDescriptor(WebSocket.prototype,'bufferedAmount');
+  Object.defineProperty(WebSocket.prototype,'bufferedAmount',{configurable:true,get(){return 512*1024;}});
+  try {
+    host.ws.send(JSON.stringify({type:'pong',at:42}));
+    await until(()=>viewer.messages.some(m=>m.type==='pong') || viewer.ws.readyState===WebSocket.CLOSED);
+    assert.equal(viewer.ws.readyState,WebSocket.OPEN);
+    assert.ok(viewer.messages.some(m=>m.type==='pong' && m.at===42));
+  } finally {Object.defineProperty(WebSocket.prototype,'bufferedAmount',original);}
+});
+
+test('health endpoint identifies the deployed version without exposing credentials',async t=>{
+  const {base}=await fixture(t);
+  assert.deepEqual(await (await fetch(base+'/health')).json(),{app:'codespace-desktop',version:'0.1.1'});
+});

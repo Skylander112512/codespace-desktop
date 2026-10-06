@@ -4,6 +4,10 @@ import importlib.util
 import json
 from pathlib import Path
 import unittest
+from unittest.mock import patch
+from websockets.asyncio.server import serve
+from websockets.http11 import Response
+from websockets.datastructures import Headers
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCConfiguration
 from websockets.asyncio.client import connect
 
@@ -16,6 +20,14 @@ class UnitTests(unittest.TestCase):
             with self.assertRaises(ValueError):host.websocket_url(url)
         self.assertEqual(host.websocket_url('https://sample-3000.app.github.dev'),'wss://sample-3000.app.github.dev/ws')
 
+    def test_demo_cli_prompts_for_url_without_mac_permissions(self):
+        async def fake_run(agent, url, key):
+            self.assertEqual(url, 'ws://localhost:3000/ws')
+            self.assertTrue(agent.capture.demo)
+            agent.capture.close()
+        with patch.object(host.sys, 'argv', ['host.py', '--demo']), patch('builtins.input', return_value='http://localhost:3000'), patch.object(host.getpass, 'getpass', return_value='x'*43), patch.object(host.Host, 'run', fake_run):
+            host.main()
+
     def test_release_all_inputs_and_validate_coordinates(self):
         controls=host.MacInput(demo=True)
         controls.handle({'action':'key','code':'MetaLeft','down':True})
@@ -27,6 +39,14 @@ class UnitTests(unittest.TestCase):
         self.assertFalse(controls.buttons)
 
 class Integration(unittest.IsolatedAsyncioTestCase):
+    async def test_private_port_redirect_has_actionable_error(self):
+        def reject(connection, request):
+            return Response(302, 'Found', Headers({'Location':'https://github.dev/pf-signin'}), b'')
+        async with serve(lambda ws: None, '127.0.0.1', 0, process_request=reject) as server:
+            port=server.sockets[0].getsockname()[1]
+            with self.assertRaisesRegex(RuntimeError, r'HTTP 302.*Public'):
+                await host.Host(demo=True).run(f'ws://127.0.0.1:{port}/ws','x'*43)
+
     async def test_webrtc_relay_and_session_reconnect(self):
         agent=host.Host(demo=True)
         task=asyncio.create_task(agent.run('ws://127.0.0.1:3000/ws','synthetic-host-key-00000000000000000000'))

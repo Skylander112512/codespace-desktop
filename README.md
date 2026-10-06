@@ -4,13 +4,11 @@ Control your Mac from a Chromebook browser using a GitHub Codespaces project. No
 
 This is a working prototype, not a signed commercial remote-desktop product. It includes a Mac host, browser viewer, authenticated signaling server, and a compatibility video relay. It must still be tested on your actual Mac/Chromebook networks.
 
-## 1. Put the project in GitHub
+## 1. Open the project
 
-Create a **public** repository named `codespace-desktop`. Upload this folder's contents, including `.devcontainer` and `.gitignore`. Do this from your Mac so the Chromebook does not need to download files. Never upload `.secrets.json`, `.venv`, or `node_modules`.
+Open [Skylander112512/codespace-desktop](https://github.com/Skylander112512/codespace-desktop) on the Chromebook. Select **Code → Codespaces** and open your existing Codespace, or create one on `main`.
 
-On the Chromebook, open the repository on GitHub. Select **Code → Codespaces → Create codespace on main**. Wait for it to finish starting.
-
-If you uploaded only the visible files, the default Codespace works too; run `npm ci` manually before the next step.
+For an existing Codespace, stop `npm start` with Ctrl+C, then run `git pull --ff-only` before restarting it. Download the matching Mac host from the [latest release](https://github.com/Skylander112512/codespace-desktop/releases/latest). Version **0.1.1** fixes the old Mac startup crash and a relay disconnect on slow connections. Replace the old Mac folder, including its bundled executable; replacing only the launcher does not update the host.
 
 ## 2. Start the server in Codespaces
 
@@ -45,6 +43,19 @@ For an Intel Mac or if using the source instead, install Python 3.12+ from [pyth
 Paste the **viewer key** into the Codespaces viewer page and select **Connect to Mac**. Click the desktop to focus it. Mouse, dragging, scrolling, keyboard input, and a Command-Tab button are provided. `Ctrl → ⌘` maps Chromebook Control shortcuts to Mac Command shortcuts; turn it off for actual Control keys. Some browser/ChromeOS shortcuts are reserved by the Chromebook.
 
 **Disconnect** ends the viewer session. Stopping the Mac host with **Ctrl+C**, closing its Terminal window, or stopping Codespaces ends access. No background service or login item is installed. The host does not reconnect automatically after losing its server connection; restart it.
+
+## If the connection fails
+
+The viewer stays on the key form until the server accepts the key. A failed connection leaves a readable error and close code. **Connection details** records authentication, the first displayed frame, direct-video state, and disconnects without storing keys.
+
+- **HTTP 302 / GitHub sign-in on the Mac:** port 3000 is private. In Codespaces → Ports, set it to **Public**. Recheck after restarting the Codespace. Browser sign-in does not sign in the standalone Mac host.
+- **4003:** use the viewer key in the browser and the Mac host key on the Mac.
+- **4009 / already connected:** close the other host or viewer first.
+- **1006:** check that `npm start` is still running and the forwarded address is reachable. Reload the page after updating the server.
+- **Screen capture failed:** enable Screen Recording for the launching host/Terminal and restart it.
+- **Video works but input does not:** enable Accessibility for the host/Terminal and restart it. The host reports when that permission is off.
+
+The Mac window now stays open on errors. Its timestamped messages show capture, first-frame delivery, ICE, and direct-video states. The Codespaces terminal records socket close codes. Version 0.1.1 appears in both the host banner and browser connection details.
 
 ## Latency and network behavior
 

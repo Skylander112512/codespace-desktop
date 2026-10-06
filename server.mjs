@@ -8,7 +8,7 @@ const root = new URL('./', import.meta.url);
 const equal = (a, b) => typeof a === 'string' && Buffer.byteLength(a) === Buffer.byteLength(b) && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 const send = (ws, msg) => { if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg)); };
 
-export function createDesktopServer({hostKey, viewerKey, iceServers = [{urls:'stun:stun.l.google.com:19302'}], publicOrigin} = {}) {
+export function createDesktopServer({hostKey, viewerKey, iceServers = [{urls:'stun:stun.l.google.com:19302'}], publicOrigin, log = () => {}} = {}) {
   if (!hostKey || !viewerKey || hostKey === viewerKey) throw new Error('Distinct host and viewer keys are required.');
   const assets = new Map([
     ['/', ['public/index.html','text/html; charset=utf-8']],
@@ -19,6 +19,10 @@ export function createDesktopServer({hostKey, viewerKey, iceServers = [{urls:'st
     const headers = {'Cache-Control':'no-store', 'X-Content-Type-Options':'nosniff', 'Referrer-Policy':'no-referrer',
       'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob:; media-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"};
     const asset = assets.get(req.url);
+    if (req.method === 'GET' && req.url === '/health') {
+      res.writeHead(200, {...headers, 'Content-Type':'application/json'});
+      res.end(JSON.stringify({app:'codespace-desktop',version:'0.1.1'})); return;
+    }
     if (req.method !== 'GET' || !asset) { res.writeHead(404, headers); res.end('Not found'); return; }
     res.writeHead(200, {...headers, 'Content-Type':asset[1]});
     res.end(readFileSync(new URL(asset[0],root)));
@@ -48,7 +52,7 @@ export function createDesktopServer({hostKey, viewerKey, iceServers = [{urls:'st
     const deadline = setTimeout(() => ws.close(4001,'Authentication required'), 5000);
     ws.on('pong', () => { alive = true; });
     const heartbeat = setInterval(() => { if (!alive) return ws.terminate(); alive = false; ws.ping(); },15000);
-    ws.on('error', () => {});
+    ws.on('error', error => log(`Socket error (${role || 'unauthenticated'}): ${error.code || error.name}`));
     ws.on('message', (data, binary) => {
       if (Date.now()-period > 1000) { period=Date.now(); count=0; }
       if (++count > 400) { ws.close(4008,'Too many messages'); return; }
@@ -70,7 +74,8 @@ export function createDesktopServer({hostKey, viewerKey, iceServers = [{urls:'st
         }
         if (peers[candidate]) { ws.close(4009,`${candidate} already connected`); return; }
         clearTimeout(deadline); role=candidate; peers[role]=ws;
-        send(ws,{type:'authenticated',role,iceServers});
+        log(`${role} authenticated`);
+        send(ws,{type:'authenticated',role,iceServers,version:'0.1.1'});
         if (peers.host && peers.viewer) {
           send(peers.viewer,{type:'host-ready'});
           send(peers.host,{type:'viewer-ready'});
@@ -80,10 +85,13 @@ export function createDesktopServer({hostKey, viewerKey, iceServers = [{urls:'st
       const allow=role==='host'?['offer','status','pong']:['answer','input','frame-ack','ping','mode'];
       if (!allow.includes(msg.type)) return;
       const other=peers[role==='host'?'viewer':'host'];
-      if (other?.bufferedAmount > 256*1024) { other.close(4008,'Connection too slow; reconnect'); return; }
+      // A single valid JPEG can exceed 256 KiB. Do not disconnect the viewer
+      // when a pong or SDP follows that frame on a slower network.
+      if (other?.bufferedAmount > 4*1024*1024) { other.close(4008,'Connection stalled; reconnect'); return; }
       send(other,msg);
     });
-    ws.on('close', () => {
+    ws.on('close', (code) => {
+      log(`${role || 'Unauthenticated socket'} disconnected (code ${code})`);
       clearTimeout(deadline); clearInterval(heartbeat);
       if (role && peers[role]===ws) {
         peers[role]=null;
@@ -106,7 +114,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const port=Number(process.env.PORT || 3000);
   const origin=process.env.PUBLIC_URL || (process.env.CODESPACE_NAME ? `https://${process.env.CODESPACE_NAME}-${port}.${process.env.GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN || 'app.github.dev'}` : `http://localhost:${port}`);
   const iceServers=process.env.ICE_SERVERS_JSON ? JSON.parse(process.env.ICE_SERVERS_JSON) : undefined;
-  const app=createDesktopServer({...keys,iceServers,publicOrigin:origin});
+  const app=createDesktopServer({...keys,iceServers,publicOrigin:origin,log:message=>console.log(new Date().toISOString(),message)});
   app.server.listen(port,'0.0.0.0',() => {
     console.log(`\nCodespace Desktop\nViewer: ${origin}\n\nViewer key: ${keys.viewerKey}\nMac host key: ${keys.hostKey}\n\nKeep these keys private. They are NOT GitHub tokens.\nIn Codespaces: Ports → 3000 → Port Visibility → Public.\nThe public viewer page requires its access key; the Mac uses a separate key.\nStop with Ctrl+C.\n`);
   });

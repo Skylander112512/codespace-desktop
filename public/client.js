@@ -1,6 +1,18 @@
 const $ = id => document.getElementById(id);
 let ws, pc, channel, frameURL, generation=0, gotFrame=false;
-let useRTC=false, lastMove=0, statsTimer;
+let useRTC=false, lastMove=0, statsTimer, connectTimer;
+let lastVideoAt=0, videoTime=-1;
+const events=[];
+function detail(text){
+  events.push(`${new Date().toLocaleTimeString()} · ${text}`);
+  if(events.length>30)events.shift();
+  $('details-log').textContent=events.join('\n');
+}
+function connectionError(text){
+  $('connection-error').textContent=text;
+  $('connection-error').hidden=false;
+  detail(text);
+}
 const held=new Set();
 const status=text=>{$('status').textContent=text;};
 const signal=msg=>{if(ws?.readyState===WebSocket.OPEN)ws.send(JSON.stringify(msg));};
@@ -10,9 +22,11 @@ function control(msg){
   else signal(msg);
 }
 function release(){held.clear();control({type:'input',action:'release'});}
-function closeRTC(){if(pc){pc.close();pc=null;}channel=null;useRTC=false;$('video').srcObject=null;$('video').hidden=true;}
+function closeRTC(){if(pc){pc.close();pc=null;}channel=null;useRTC=false;$('video').srcObject=null;$('video').hidden=true;lastVideoAt=0;videoTime=-1;}
 function chooseMode(){
-  useRTC=!$('relay').checked && pc?.connectionState==='connected' && $('video').readyState>=2;
+  const previous=useRTC;
+  useRTC=Boolean(!$('relay').checked && pc?.connectionState==='connected' && $('video').readyState>=2 && performance.now()-lastVideoAt<4000);
+  if(previous!==useRTC)detail(useRTC?'Direct video is playing.':'Using compatibility relay.');
   signal({type:'mode',rtc:useRTC});
   $('video').hidden=!useRTC;$('frame').hidden=useRTC||!gotFrame;
   $('mode-label').textContent=useRTC?'Direct / WebRTC video':'Compatibility relay';
@@ -25,8 +39,8 @@ async function offer(msg){
   closeRTC();
   const peer=new RTCPeerConnection({iceServers:msg.iceServers||[]});pc=peer;
   peer.ondatachannel=e=>{channel=e.channel;channel.onmessage=e=>{try{receive(JSON.parse(e.data));}catch{}};};
-  peer.ontrack=e=>{$('video').srcObject=new MediaStream([e.track]);$('video').play().catch(()=>{});};
-  peer.onconnectionstatechange=()=>{if(peer===pc)chooseMode();};
+  peer.ontrack=e=>{$('video').srcObject=new MediaStream([e.track]);$('video').play().catch(()=>detail('Browser could not play direct video; relay remains available.'));};
+  peer.onconnectionstatechange=()=>{if(peer===pc){detail(`Direct video: ${peer.connectionState}`);chooseMode();}};
   try{
     await peer.setRemoteDescription({type:'offer',sdp:msg.sdp});
     await peer.setLocalDescription(await peer.createAnswer());
@@ -35,56 +49,71 @@ async function offer(msg){
       peer.addEventListener('icegatheringstatechange',()=>{if(peer.iceGatheringState==='complete'){clearTimeout(timer);resolve();}});
     });
     if(generation===current && pc===peer)signal({type:'answer',sdp:peer.localDescription.sdp});
-  }catch{if(generation===current)status('Direct connection unavailable. Using compatibility relay.');}
+  }catch(error){if(generation===current){detail(`Direct connection unavailable (${error.name}); using relay.`);status('Direct connection unavailable. Using compatibility relay.');}}
 }
 function receive(msg){
-  if(msg.type==='authenticated'){status('Waiting for your Mac…');$('connection').textContent='Connected to Codespaces';}
-  if(msg.type==='host-ready'){status('Mac found. Connecting…');}
+  if(msg.type==='authenticated'){
+    clearTimeout(connectTimer);$('key').value='';
+    $('intro').hidden=true;$('login').hidden=true;$('notes').hidden=true;$('desktop').hidden=false;
+    document.body.classList.add('connected');
+    status('Waiting for your Mac…');$('connection').textContent='Connected to Codespaces';
+    detail(`Viewer key accepted. Server ${msg.version||'0.1.0'}; waiting for Mac.`);
+    statsTimer=setInterval(()=>{
+      const video=$('video');
+      if(video.currentTime!==videoTime){videoTime=video.currentTime;lastVideoAt=performance.now();}
+      chooseMode();control({type:'ping',at:performance.now()});
+    },2000);
+  }
+  if(msg.type==='host-ready'){status('Mac found. Connecting…');detail('Mac authenticated. Waiting for its first screen frame.');}
   if(msg.type==='offer')offer(msg);
-  if(msg.type==='status')status(msg.text);
+  if(msg.type==='status'){status(msg.text);detail(msg.text);}
   if(msg.type==='pong')$('latency').textContent=`${Math.max(0,Math.round(performance.now()-msg.at))} ms control round trip`;
   if(msg.type==='peer-left'){
+    detail('Mac disconnected; the viewer remains connected to Codespaces.');
     release();closeRTC();generation++;gotFrame=false;
     $('frame').hidden=true;$('placeholder').hidden=false;$('mode-label').textContent='Mac offline';
     $('latency').textContent='';status('Mac disconnected. Reopen the Mac host to reconnect.');
   }
 }
-$('video').addEventListener('loadeddata',chooseMode);
+$('video').addEventListener('loadeddata',()=>{lastVideoAt=performance.now();chooseMode();});
 $('relay').addEventListener('change',()=>{release();chooseMode();});
 $('connect-form').addEventListener('submit',event=>{
   event.preventDefault();if(ws)return;
   const key=$('key').value.trim();if(!key)return;
+  $('connection-error').hidden=true;$('connect-button').disabled=true;
+  $('connection').textContent='Connecting…';detail('Opening secure connection to Codespaces…');
   ws=new WebSocket(`${location.protocol==='https:'?'wss':'ws'}://${location.host}/ws`);
   ++generation;
   const socket=ws;
-  ws.onopen=()=>{signal({type:'auth',role:'viewer',key});$('key').value='';};
+  ws.onopen=()=>{if(socket!==ws)return;detail('Socket open. Checking viewer key…');signal({type:'auth',role:'viewer',key});};
+  connectTimer=setTimeout(()=>{if(socket===ws){connectionError('Connection timed out. Check npm start and port 3000 in Codespaces.');socket.close(4000,'Connection timed out');}},12000);
   ws.onmessage=async event=>{
-    if(typeof event.data==='string'){try{receive(JSON.parse(event.data));}catch{}return;}
     if(socket!==ws)return;
-    const next=URL.createObjectURL(event.data);
+    if(typeof event.data==='string'){try{receive(JSON.parse(event.data));}catch{detail('Server sent an unreadable message.');}return;}
+    const next=URL.createObjectURL(new Blob([event.data],{type:'image/jpeg'}));
     const previous=frameURL;frameURL=next;
     $('frame').onload=()=>{
       if(previous)URL.revokeObjectURL(previous);
       if(socket!==ws)return;
-      if(!gotFrame&&!useRTC)status('Connected through Codespaces relay · trying direct video');
+      if(!gotFrame){detail('First screen frame displayed.');if(!useRTC)status('Connected through Codespaces relay · trying direct video');}
       gotFrame=true;$('frame').hidden=useRTC;$('placeholder').hidden=true;
       if(!useRTC)$('mode-label').textContent='Compatibility relay';
       signal({type:'frame-ack'});
     };
-    $('frame').onerror=()=>{signal({type:'frame-ack'});};
+    $('frame').onerror=()=>{if(previous)URL.revokeObjectURL(previous);if(socket!==ws)return;detail('A screen frame could not be displayed; requesting the next frame.');signal({type:'frame-ack'});};
     $('frame').src=next;
   };
   ws.onclose=event=>{
-    const reason=event.reason||'Connection closed. Check that your Codespace is running.';
-    cleanup();$('connection').textContent=reason;
+    if(socket!==ws)return;
+    const reason=event.reason||'Network connection lost. Check npm start and that port 3000 is Public.';
+    cleanup();$('connection').textContent='Disconnected';
+    if(event.code===1000)detail('Disconnected.');
+    else connectionError(`Disconnected (${event.code}): ${reason}`);
   };
-  ws.onerror=()=>{$('connection').textContent='Could not connect. Check port 3000 and try again.';};
-  $('intro').hidden=true;$('login').hidden=true;$('notes').hidden=true;$('desktop').hidden=false;
-  document.body.classList.add('connected');
-  statsTimer=setInterval(()=>control({type:'ping',at:performance.now()}),2000);
+  ws.onerror=()=>{if(socket===ws)connectionError('Could not reach the server. Check npm start, port 3000 → Public, and open its HTTPS address in a full browser tab.');};
 });
 function cleanup(){
-  generation++;clearInterval(statsTimer);closeRTC();ws=null;held.clear();gotFrame=false;
+  generation++;clearInterval(statsTimer);clearTimeout(connectTimer);$('connect-button').disabled=false;closeRTC();ws=null;held.clear();gotFrame=false;
   if(frameURL){URL.revokeObjectURL(frameURL);frameURL=null;}
   $('frame').removeAttribute('src');$('frame').hidden=true;$('placeholder').hidden=false;
   $('latency').textContent='';$('mode-label').textContent='Waiting for Mac';
