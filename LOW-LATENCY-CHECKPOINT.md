@@ -22,10 +22,10 @@ User requested latency improvements and asked to resume where work stopped when 
 - Browser compatibility relay works. Live switch to Sharper verified: 1280×720 / 30 FPS, hardware encoding retained.
 
 ## Remaining before completion
-- Final code review: added a twice-per-second refresh of the latest captured image so an idle ScreenCaptureKit display stays healthy. Rebuilt package; native regression tests running.
-- Commit/push, publish v0.2.0 package, install the new Mac folder without overwriting the working old folder.
-- Configure the user's actual private code in their existing Codespace and migrate Mac settings privately. Never place personal credentials in Git or release assets. Git credentials work for repo/releases; Codespaces API returned 403. Browser Codespaces page is signed out. Asked the user to sign in; pending. Do not claim their private code is configured until it is.
-- Update this file with publication and configuration status.
+- Final code review: added a twice-per-second refresh of the latest captured image so an idle ScreenCaptureKit display stays healthy. Rebuilt package; all five native regression tests pass.
+- Published v0.2.0 release with Mac ZIP and SHA256SUMS. Implementation commit 00d809a is on main and low-latency. Installed a separate “Codespace Desktop Mac 0.2.0” folder in Downloads; old folder preserved. Previous Mac connection details migrated into private Application Support settings. Service was offline, so current connection validity still needs verification.
+- Configure the user's actual private code in their existing Codespace and migrate Mac settings privately. Never place personal credentials in Git or release assets. Git credentials work for repo/releases; Codespaces API returned 403. User signed in and existing Codespace opened. VS Code shows “Trust Folder & Continue” before allowing a terminal. Asked for approval; pending. Do not click until approved. Next: inspect git status, preserve local changes, pull main, prepare npm run set-code. Browser safety rules require user entry/submission of the new credential; do not enter it for them through UI. Then start server, verify public port and login. Do not claim their private code is configured until it is.
+- Continue from the pending Codespace trust approval; local demo/test processes are stopped. Browser tab for the real Codespace is retained. New Mac launcher already exists in Downloads.
 - No TURN service provisioned; existing ICE_SERVERS_JSON configuration remains supported. No paid provider/budget selected.
 
 ## Local development commands
