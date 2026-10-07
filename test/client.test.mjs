@@ -1,3 +1,4 @@
+import {receiveQuality} from '../public/video-quality.js';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
@@ -16,11 +17,11 @@ function browser(){
     send(data){this.sent.push(JSON.parse(data));}
     close(code,reason){this.readyState=3;this.onclose({code,reason});}
   }
-  const context={document:{getElementById:get,body:{classList:{add(){},remove(){}}},addEventListener(){}},
+  const context={receiveQuality,document:{getElementById:get,body:{classList:{add(){},remove(){}}},addEventListener(){}},
     window:{addEventListener(){}},location:{protocol:'https:',host:'example.test'},WebSocket:Socket,
     performance:{now:()=>100},setInterval:()=>1,clearInterval(){},setTimeout:()=>1,clearTimeout(){}};
   vm.createContext(context);
-  vm.runInContext(readFileSync(new URL('../public/client.js',import.meta.url),'utf8'),context);
+  vm.runInContext(readFileSync(new URL('../public/client.js',import.meta.url),'utf8').replace(/^import .*;\n/,''),context);
   return {get,Socket,run:code=>vm.runInContext(code,context),context,submit(){get('key').value='viewer-test-key';get('connect-form').handlers.submit({preventDefault(){}});return Socket.latest;}};
 }
 

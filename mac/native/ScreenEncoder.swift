@@ -36,9 +36,11 @@ final class Encoder: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Send
     let demo: Bool
     let maxFPS: Int
 
-    init(demo: Bool, maxFPS: Int = 60, compact: Bool = false) {
+    init(demo: Bool, maxFPS: Int = 60, compact: Bool = false, fullHD: Bool = false, initialBitrate: Int = 4_000_000) {
         self.demo = demo; self.maxFPS = maxFPS; self.fps = maxFPS
         if compact { width = 854; height = 480 }
+        else if fullHD { width = 1920; height = 1080 }
+        bitrate = max(500_000, min(16_000_000, initialBitrate))
     }
 
     func configureEncoder() throws {
@@ -140,7 +142,7 @@ final class Encoder: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Send
         if command["type"] as? String == "keyframe" { forceKeyframe = true; return }
         guard command["type"] as? String == "configure", let session else { return }
         if let value = command["bitrate"] as? Int {
-            bitrate = max(500_000, min(8_000_000, value))
+            bitrate = max(500_000, min(16_000_000, value))
             if VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AverageBitRate, value: bitrate as CFTypeRef) != noErr {
                 diagnostic(["type":"warning", "message":"Bitrate update rejected"])
             }
@@ -251,7 +253,9 @@ final class Encoder: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Send
     static func main() async {
         signal(SIGPIPE, SIG_IGN)
         let arguments = CommandLine.arguments
-        let encoder = Encoder(demo: arguments.contains("--demo"), maxFPS: arguments.contains("--fps30") ? 30 : 60, compact: arguments.contains("--compact"))
+        let rateIndex = arguments.firstIndex(of: "--bitrate")
+        let rate = rateIndex.flatMap { $0 + 1 < arguments.count ? Int(arguments[$0 + 1]) : nil } ?? 4_000_000
+        let encoder = Encoder(demo: arguments.contains("--demo"), maxFPS: arguments.contains("--fps30") ? 30 : 60, compact: arguments.contains("--compact"), fullHD: arguments.contains("--1080p"), initialBitrate: rate)
         do {
             try await encoder.start()
             while !Task.isCancelled { try await Task.sleep(nanoseconds: 60_000_000_000) }

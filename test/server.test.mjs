@@ -70,7 +70,7 @@ test('a queued JPEG does not close the viewer when a pong follows it', async t=>
 
 test('health endpoint identifies the deployed version without exposing credentials',async t=>{
   const {base}=await fixture(t);
-  assert.deepEqual(await (await fetch(base+'/health')).json(),{app:'codespace-desktop',version:'0.2.2'});
+  assert.deepEqual(await (await fetch(base+'/health')).json(),{app:'codespace-desktop',version:'0.2.3'});
 });
 
 

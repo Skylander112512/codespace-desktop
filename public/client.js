@@ -1,3 +1,4 @@
+import {receiveQuality} from './video-quality.js';
 const $ = id => document.getElementById(id);
 let ws, pc, channel, motionChannel, frameURL, generation=0, gotFrame=false;
 let useRTC=false, statsTimer, connectTimer;
@@ -104,12 +105,16 @@ async function offer(msg){
   peer.onconnectionstatechange=()=>{if(peer===pc){detail(`Direct video: ${peer.connectionState}`);chooseMode();}};
   try{
     await peer.setRemoteDescription({type:'offer',sdp:msg.sdp});
-    await peer.setLocalDescription(await peer.createAnswer());
+    const quality=$('quality').value||'smooth';
+    const answer=await peer.createAnswer();
+    answer.sdp=await receiveQuality(answer.sdp,quality);
+    if(generation!==current || pc!==peer)return;
+    await peer.setLocalDescription(answer);
     if(peer.iceGatheringState!=='complete')await new Promise(resolve=>{
       const timer=setTimeout(resolve,7000);
       peer.addEventListener('icegatheringstatechange',()=>{if(peer.iceGatheringState==='complete'){clearTimeout(timer);resolve();}});
     });
-    if(generation===current && pc===peer)signal({type:'answer',sdp:peer.localDescription.sdp,inputProtocol:2,quality:$('quality').value||'smooth'});
+    if(generation===current && pc===peer)signal({type:'answer',sdp:peer.localDescription.sdp,inputProtocol:2,quality});
   }catch(error){if(generation===current){detail(`Direct connection unavailable (${error.name}); using relay.`);status('Direct connection unavailable. Using compatibility relay.');}}
 }
 function receive(msg){

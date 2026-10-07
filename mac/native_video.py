@@ -24,11 +24,13 @@ def helper_path():
 
 
 class NativeVideoTrack(VideoStreamTrack):
-    def __init__(self, demo=False, path=None, max_fps=60, compact=False):
+    def __init__(self, demo=False, path=None, max_fps=60, compact=False, height=720, bitrate=4_000_000):
         super().__init__()
         self.demo = demo
         self.max_fps = max_fps
         self.compact = compact
+        self.height = 480 if compact else height
+        if self.height not in (480,720,1080):raise ValueError("Unsupported capture height")
         self.path = path or helper_path()
         self.process = None
         self.queue = asyncio.Queue(maxsize=2)
@@ -39,13 +41,13 @@ class NativeVideoTrack(VideoStreamTrack):
         self.last_keyframe_request = 0
         self.last_pts = -1
         self.metrics = {}
-        self.settings = {'bitrate': 4_000_000, 'fps': max_fps}
+        self.settings = {'bitrate': bitrate, 'fps': max_fps}
         self.dropped = 0
 
     async def start(self):
         if not self.path:
             raise RuntimeError('Native ScreenEncoder helper is not installed')
-        args = [str(self.path)] + (['--demo'] if self.demo else []) + (['--fps30'] if self.max_fps==30 else []) + (['--compact'] if self.compact else [])
+        args = [str(self.path)] + (['--demo'] if self.demo else []) + (['--fps30'] if self.max_fps==30 else []) + (['--compact'] if self.height==480 else ['--1080p'] if self.height==1080 else []) + ['--bitrate',str(self.settings['bitrate'])]
         self.process = await asyncio.create_subprocess_exec(*args, stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         self.tasks = [asyncio.create_task(self._frames()), asyncio.create_task(self._diagnostics())]
@@ -73,7 +75,7 @@ class NativeVideoTrack(VideoStreamTrack):
             self.last_keyframe_request = now
 
     def configure(self, bitrate, fps):
-        settings = {'bitrate': max(500_000, min(8_000_000, int(bitrate))), 'fps': max(15, min(self.max_fps, int(fps)))}
+        settings = {'bitrate': max(500_000, min(16_000_000, int(bitrate))), 'fps': max(15, min(self.max_fps, int(fps)))}
         if settings != self.settings:
             self.settings = settings
             self._command({'type': 'configure', **settings})

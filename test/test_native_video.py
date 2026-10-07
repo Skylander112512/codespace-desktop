@@ -64,6 +64,23 @@ class HardwareTests(unittest.IsolatedAsyncioTestCase):
             await track.close()
         self.assertIsNotNone(track.process.returncode)
 
+    async def test_fullhd_60fps_hardware_frames(self):
+        track=await NativeVideoTrack(demo=True,height=1080,bitrate=10_000_000).start()
+        try:
+            decoder=av.CodecContext.create('h264','r')
+            started=time.monotonic(); count=0
+            async with asyncio.timeout(8):
+                for _ in range(90):
+                    packet=await track.recv()
+                    for frame in decoder.decode(packet):
+                        self.assertEqual((frame.width,frame.height),(1920,1080));count+=1
+            elapsed=time.monotonic()-started
+            self.assertEqual(count,90)
+            self.assertEqual(track.settings['fps'],60)
+            self.assertLess(elapsed,3.0)
+            print(f'1080p hardware: {count/elapsed:.1f} frames/s')
+        finally:await track.close()
+
     async def test_compact_60fps_stays_within_browser_level31(self):
         track=await NativeVideoTrack(demo=True,compact=True).start()
         try:

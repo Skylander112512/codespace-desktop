@@ -6,7 +6,6 @@ import getpass
 import io
 import json
 import math
-import re
 import ssl
 import sys
 import time
@@ -18,13 +17,14 @@ from aiortc import RTCPeerConnection, RTCSessionDescription, RTCConfiguration, R
 from av import VideoFrame
 from native_video import NativeVideoTrack, helper_path
 from adaptive import AdaptiveQuality
+from video_quality import select_quality
 from host_settings import load_settings, save_settings
 from PIL import Image, ImageDraw
 from websockets.asyncio.client import connect
 import certifi
 from websockets.exceptions import ConnectionClosed, InvalidStatus
 
-VERSION = '0.2.2'
+VERSION = '0.2.3'
 
 
 class DirectConnect(connect):
@@ -299,8 +299,8 @@ class Host:
                     self.rtc=False; self.controls.release()
             offer=await pc.createOffer()
             if self.native:
-                # 720p60 requires H.264 level 3.2; aiortc defaults to level 3.1.
-                offer=RTCSessionDescription(sdp=offer.sdp.replace('profile-level-id=42e01f','profile-level-id=42e020'),type='offer')
+                # Advertise up to 1080p60 (level 4.2); honor the answer before sending.
+                offer=RTCSessionDescription(sdp=offer.sdp.replace('profile-level-id=42e01f','profile-level-id=42e02a'),type='offer')
             await pc.setLocalDescription(offer)
             await self.send({'type':'offer','sdp':pc.localDescription.sdp,'iceServers':self.ice_servers})
         except asyncio.CancelledError:raise
@@ -395,20 +395,23 @@ class Host:
                     elif kind=='answer' and self.pc:
                         try:
                             if self.native:
-                                levels=re.findall(r'profile-level-id=42[ce]0([0-9a-fA-F]{2})',msg['sdp'],re.I)
-                                if not levels or max(int(level,16) for level in levels)<32:
-                                    original=self.native.original_keyframe_handler
-                                    await self.native.close(); self.native=None
-                                    self.sender._send_keyframe=original
-                                    smooth=msg.get('quality','smooth')!='sharp'
-                                    native=NativeVideoTrack(demo=self.capture.demo,max_fps=60 if smooth else 30,compact=smooth)
-                                    try:
-                                        await native.start()
-                                        self.native=native; self.sender.replaceTrack(native); native.bind_sender(self.sender)
-                                        self.quality=AdaptiveQuality(max_fps=60 if smooth else 30)
-                                        log('Browser level 3.1: hardware '+('480p / 60 FPS (smooth)' if smooth else '720p / 30 FPS (sharp)'))
-                                    except Exception:
-                                        await native.close(); self.sender.replaceTrack(ScreenTrack(self.capture))
+                                mode=msg.get('quality','smooth')
+                                quality=select_quality(msg['sdp'],mode)
+                                original=self.native.original_keyframe_handler
+                                await self.native.close(); self.native=None
+                                self.sender._send_keyframe=original
+                                native=NativeVideoTrack(demo=self.capture.demo,max_fps=quality.fps,height=quality.height,bitrate=quality.bitrate)
+                                try:
+                                    await native.start()
+                                    self.native=native; self.sender.replaceTrack(native); native.bind_sender(self.sender)
+                                    self.quality=AdaptiveQuality(max_fps=quality.fps,bitrate=quality.bitrate,max_bitrate=quality.max_bitrate)
+                                    text=f'Hardware video: up to {quality.label}.'
+                                    requested={'720p60':720,'1080p60':1080}.get(mode,0)
+                                    if requested>quality.height:text+=' Your browser reported a lower receive limit; using a compatible size.'
+                                    await self.send({'type':'status','text':text});log(text)
+                                except Exception:
+                                    await native.close(); self.sender.replaceTrack(ScreenTrack(self.capture))
+                                    await self.send({'type':'status','text':'Hardware mode unavailable. Using software video.'})
                             await self.pc.setRemoteDescription(RTCSessionDescription(sdp=msg['sdp'],type='answer'))
                             # Old viewers assign every channel to their control
                             # variable. A second channel would swallow clicks.

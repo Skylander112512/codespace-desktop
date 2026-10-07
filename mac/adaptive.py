@@ -4,8 +4,9 @@ import time
 
 
 class AdaptiveQuality:
-    def __init__(self,max_fps=60):
-        self.bitrate = 4_000_000
+    def __init__(self,max_fps=60,bitrate=4_000_000,max_bitrate=6_000_000):
+        self.bitrate = bitrate
+        self.max_bitrate = max_bitrate
         self.max_fps=max_fps
         self.fps = max_fps
         self.good = 0
@@ -31,7 +32,7 @@ class AdaptiveQuality:
             self.good += 1
             if self.good >= 4:
                 self.good = 0
-                self.bitrate = min(6_000_000, self.bitrate + 250_000)
+                self.bitrate = min(self.max_bitrate, self.bitrate + 250_000)
                 if self.bitrate >= 2_500_000: self.fps = self.max_fps
                 elif self.bitrate >= 1_250_000: self.fps = 30
         else:
