@@ -6,6 +6,7 @@ import getpass
 import io
 import json
 import math
+import re
 import ssl
 import sys
 import time
@@ -15,12 +16,15 @@ from urllib.parse import urlsplit
 
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCConfiguration, RTCIceServer, VideoStreamTrack
 from av import VideoFrame
+from native_video import NativeVideoTrack, helper_path
+from adaptive import AdaptiveQuality
+from host_settings import load_settings, save_settings
 from PIL import Image, ImageDraw
 from websockets.asyncio.client import connect
 import certifi
 from websockets.exceptions import ConnectionClosed, InvalidStatus
 
-VERSION = '0.1.2'
+VERSION = '0.2.0'
 
 
 class DirectConnect(connect):
@@ -49,6 +53,8 @@ class MacInput:
         self.buttons = set()
         self.last_input = time.monotonic()
         self.point = (0, 0)
+        self.last_reliable_seq = 0
+        self.last_motion_seq = 0
         if not demo:
             import Quartz
             self.q = Quartz
@@ -97,8 +103,19 @@ class MacInput:
         for button in list(self.buttons): self.mouse('up',button)
 
     def handle(self, msg):
-        self.last_input=time.monotonic()
         action=msg.get('action')
+        seq=msg.get('seq')
+        if seq is not None:
+            if type(seq) is not int or not 0 < seq <= 2**53-1: return
+            if action == 'move':
+                after=msg.get('after',0)
+                if type(after) is not int or after > self.last_reliable_seq: return
+                if seq <= max(self.last_reliable_seq,self.last_motion_seq): return
+                self.last_motion_seq=seq
+            else:
+                if seq <= self.last_reliable_seq: return
+                self.last_reliable_seq=seq
+        self.last_input=time.monotonic()
         if action=='release': self.release()
         elif action=='key' and isinstance(msg.get('down'),bool): self.keyboard(msg.get('code'),msg['down'])
         elif action=='tap':
@@ -186,8 +203,10 @@ class ScreenTrack(VideoStreamTrack):
 
 
 class Host:
-    def __init__(self,demo=False):
+    def __init__(self,demo=False,native=None):
         self.capture=Capture(demo); self.controls=MacInput(demo)
+        self.prefer_native=(not demo) if native is None else native
+        self.native=None; self.quality=AdaptiveQuality(); self.on_authenticated=None
         self.pc=None; self.channel=None; self.ws=None; self.active=False; self.rtc=False
         self.tasks=set(); self.ice_servers=[]; self.ack=asyncio.Event()
         self.ack.set()
@@ -202,19 +221,40 @@ class Host:
             with contextlib.suppress(asyncio.CancelledError,Exception): await task
         self.tasks.clear()
         if self.pc:await self.pc.close(); self.pc=None
+        if self.native:await self.native.close(); self.native=None
         self.channel=None; self.controls.release(); self.ack.set()
+        self.controls.last_reliable_seq=0; self.controls.last_motion_seq=0
 
     async def start_session(self):
         await self.end_session(); self.active=True
         print('Viewer connected. Close this window or press Ctrl+C to stop access.',flush=True)
         await self.send({'type':'status','text':f'Mac host {VERSION} connected. Starting screen capture…'})
-        self.tasks={asyncio.create_task(self.relay()),asyncio.create_task(self.negotiate())}
+        self.quality=AdaptiveQuality()
+        self.tasks={asyncio.create_task(self.relay()),asyncio.create_task(self.negotiate()),asyncio.create_task(self.telemetry())}
 
     async def negotiate(self):
         try:
             servers=[RTCIceServer(**server) for server in self.ice_servers]
             pc=RTCPeerConnection(RTCConfiguration(iceServers=servers)); self.pc=pc
-            pc.addTrack(ScreenTrack(self.capture))
+            track=ScreenTrack(self.capture)
+            if self.prefer_native and helper_path():
+                native=NativeVideoTrack(demo=self.capture.demo)
+                self.native=native
+                try:
+                    await native.start()
+                    track=native
+                    log('Apple hardware H.264 ready: up to 720p / 60 FPS.')
+                except asyncio.CancelledError:raise
+                except Exception as error:
+                    await native.close(); self.native=None
+                    log(f'Hardware capture unavailable ({error}); using software video.')
+            sender=pc.addTrack(track); self.sender=sender
+            if self.native:
+                codecs=[codec for codec in sender.getCapabilities('video').codecs
+                        if codec.mimeType.lower()=='video/h264' and codec.parameters.get('profile-level-id')=='42e01f']
+                if not codecs:raise RuntimeError('Compatible H.264 codec unavailable')
+                pc.getTransceivers()[0].setCodecPreferences(codecs)
+                self.native.bind_sender(sender)
             log('Screen video track created; gathering direct connection candidates.')
             @pc.on('iceconnectionstatechange')
             def ice_state():log(f'ICE: {pc.iceConnectionState}')
@@ -229,19 +269,51 @@ class Host:
                     if not isinstance(msg,dict):return
                     if msg.get('type')=='input':self.controls.handle(msg)
                     elif msg.get('type')=='ping':channel.send(json.dumps({'type':'pong','at':msg.get('at')}))
+                    elif msg.get('type')=='feedback':self.feedback(msg)
+                except (ValueError,TypeError,KeyError):pass
+            motion=pc.createDataChannel('motion',ordered=False,maxRetransmits=0)
+            @motion.on('message')
+            def mouse_motion(message):
+                if not self.active or not isinstance(message,str) or len(message)>1024:return
+                try:
+                    msg=json.loads(message)
+                    if isinstance(msg,dict) and msg.get('type')=='input' and msg.get('action')=='move':
+                        self.controls.handle(msg)
                 except (ValueError,TypeError,KeyError):pass
             @pc.on('connectionstatechange')
             async def connection_state():
                 log(f'Direct video: {pc.connectionState}')
                 if pc.connectionState in ('failed','disconnected','closed'):
                     self.rtc=False; self.controls.release()
-            await pc.setLocalDescription(await pc.createOffer())
+            offer=await pc.createOffer()
+            if self.native:
+                # 720p60 requires H.264 level 3.2; aiortc defaults to level 3.1.
+                offer=RTCSessionDescription(sdp=offer.sdp.replace('profile-level-id=42e01f','profile-level-id=42e020'),type='offer')
+            await pc.setLocalDescription(offer)
             await self.send({'type':'offer','sdp':pc.localDescription.sdp,'iceServers':self.ice_servers})
         except asyncio.CancelledError:raise
         except ConnectionClosed:return
         except Exception as error:
             log(f'Direct connection unavailable: {type(error).__name__}: {error}. Relay remains available.')
             await self.send({'type':'status','text':'Direct connection unavailable. Using compatibility relay.'})
+
+    def feedback(self,msg):
+        if self.native and not self.native.failure:
+            settings=self.quality.update(msg)
+            if settings:self.native.configure(*settings)
+
+    async def telemetry(self):
+        while self.active:
+            await asyncio.sleep(1)
+            native=self.native
+            if native and native.failure:
+                self.rtc=False
+                await self.send({'type':'status','text':'Hardware video stopped. Using compatibility relay; reconnect to retry.'})
+                await native.close(); self.native=None
+            metrics=native.metrics if native and not native.failure else {}
+            await self.send({'type':'performance','hardware':bool(metrics),
+                'encode_ms':metrics.get('encode_ms'), 'target_fps':metrics.get('fps',30),
+                'bitrate':metrics.get('bitrate'), 'dropped':metrics.get('dropped',0)})
 
     async def relay(self):
         try:
@@ -290,16 +362,35 @@ class Host:
                     msg=json.loads(raw)
                     kind=msg.get('type')
                     if kind=='authenticated':
+                        if self.on_authenticated:self.on_authenticated()
                         self.ice_servers=msg.get('iceServers',[])
                         print('Connected to Codespaces. Waiting for your Chromebook.',flush=True)
                     elif kind=='viewer-ready':await self.start_session()
                     elif kind=='peer-left':
                         await self.end_session();print('Viewer disconnected. Waiting.',flush=True)
                     elif kind=='answer' and self.pc:
-                        try:await self.pc.setRemoteDescription(RTCSessionDescription(sdp=msg['sdp'],type='answer'))
+                        try:
+                            if self.native:
+                                levels=re.findall(r'profile-level-id=42[ce]0([0-9a-fA-F]{2})',msg['sdp'],re.I)
+                                if not levels or max(int(level,16) for level in levels)<32:
+                                    original=self.native.original_keyframe_handler
+                                    await self.native.close(); self.native=None
+                                    self.sender._send_keyframe=original
+                                    smooth=msg.get('quality','smooth')!='sharp'
+                                    native=NativeVideoTrack(demo=self.capture.demo,max_fps=60 if smooth else 30,compact=smooth)
+                                    try:
+                                        await native.start()
+                                        self.native=native; self.sender.replaceTrack(native); native.bind_sender(self.sender)
+                                        self.quality=AdaptiveQuality(max_fps=60 if smooth else 30)
+                                        log('Browser level 3.1: hardware '+('480p / 60 FPS (smooth)' if smooth else '720p / 30 FPS (sharp)'))
+                                    except Exception:
+                                        await native.close(); self.sender.replaceTrack(ScreenTrack(self.capture))
+                            await self.pc.setRemoteDescription(RTCSessionDescription(sdp=msg['sdp'],type='answer'))
                         except Exception:await self.send({'type':'status','text':'Using compatibility relay.'})
                     elif kind=='input' and self.active:
                         with contextlib.suppress(ValueError,TypeError,KeyError):self.controls.handle(msg)
+                    elif kind=='quality' and self.active:await self.start_session()
+                    elif kind=='feedback' and self.active:self.feedback(msg)
                     elif kind=='frame-ack':self.ack.set()
                     elif kind=='mode':self.rtc=bool(msg.get('rtc')) and self.pc is not None and self.pc.connectionState=='connected'
                     elif kind=='ping':await self.send({'type':'pong','at':msg.get('at')})
@@ -332,7 +423,11 @@ def websocket_url(value):
 def main():
     parser=argparse.ArgumentParser(description='Codespace Desktop Mac host')
     parser.add_argument('--demo',action='store_true',help='Synthetic test screen; never reads or controls the real desktop')
+    parser.add_argument('--setup',action='store_true',help='Change the saved Codespaces address and Mac host key')
+    parser.add_argument('--software',action='store_true',help='Use the original software encoder')
+    parser.add_argument('--native-demo',action='store_true',help='Test hardware encoding with a synthetic screen only')
     args=parser.parse_args()
+    if args.native_demo:args.demo=True
     print(f'\nCodespace Desktop — Mac host {VERSION}\nKeep this window open while connected. Ctrl+C stops access.\n')
     if not args.demo:
         if sys.platform!='darwin':raise SystemExit('This host requires macOS. Use --demo only for synthetic testing.')
@@ -343,16 +438,29 @@ def main():
             raise SystemExit(1)
         if hasattr(Quartz, 'CGPreflightPostEventAccess') and not Quartz.CGPreflightPostEventAccess():
             print('Keyboard/mouse permission is OFF. Video can still work. Enable this host / Terminal in System Settings → Privacy & Security → Accessibility, then restart the host.\n')
-    url=websocket_url(input('Codespaces viewer URL: '))
-    key=getpass.getpass('Mac host key (hidden while typing): ').strip()
-    if len(key)<32:raise SystemExit('Use the full Mac host key printed by npm start, not a GitHub token.')
-    print('\nStarting foreground remote access with your host key. No automatic startup is installed.\n',flush=True)
-    asyncio.run(Host(args.demo).run(url,key))
+    saved=None if args.demo or args.setup else load_settings()
+    if saved:
+        address=saved['url'];key=saved['key']
+        print(f'Reconnecting to {address}\nTo change the saved connection, start with --setup.',flush=True)
+    else:
+        print('One-time Mac setup. Future launches will connect automatically.' if not args.demo else 'Synthetic test connection.')
+        address=input('Codespaces viewer URL: ').strip()
+        key=getpass.getpass('Mac host key (hidden; saved only on this Mac): ').strip()
+    url=websocket_url(address)
+    if len(key)<32:raise SystemExit('Use the full Mac host key printed by npm start, not the Chromebook code.')
+    print('\nStarting foreground remote access. No automatic startup is installed.\n',flush=True)
+    agent=Host(args.demo,native=False if args.software else (True if args.native_demo else None))
+    if not args.demo:
+        def remember():
+            try:save_settings(address,key)
+            except OSError:log('Could not save this connection; setup will be needed next launch.')
+        agent.on_authenticated=remember
+    asyncio.run(agent.run(url,key))
 
 
 if __name__=='__main__':
     try:main()
     except KeyboardInterrupt:print('\nAccess stopped.')
     except Exception as error:
-        print(f'\nStopped: {type(error).__name__}: {error}\nCheck the Codespace is running and port 3000 is Public. Restart to reconnect.')
+        print(f'\nStopped: {type(error).__name__}: {error}\nCheck the Codespace is running and port 3000 is Public. Restart to reconnect. Use --setup if the address or host key changed.')
         sys.exit(1)

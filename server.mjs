@@ -1,4 +1,5 @@
 import http from 'node:http';
+import {verifyViewerCode} from './viewer-code.mjs';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -8,7 +9,7 @@ const root = new URL('./', import.meta.url);
 const equal = (a, b) => typeof a === 'string' && Buffer.byteLength(a) === Buffer.byteLength(b) && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 const send = (ws, msg) => { if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg)); };
 
-export function createDesktopServer({hostKey, viewerKey, iceServers = [{urls:'stun:stun.l.google.com:19302'}], publicOrigin, codespacesPort, log = () => {}} = {}) {
+export function createDesktopServer({hostKey, viewerKey, viewerCode, iceServers = [{urls:'stun:stun.l.google.com:19302'}], publicOrigin, codespacesPort, log = () => {}} = {}) {
   if (!hostKey || !viewerKey || hostKey === viewerKey) throw new Error('Distinct host and viewer keys are required.');
   const assets = new Map([
     ['/', ['public/index.html','text/html; charset=utf-8']],
@@ -21,7 +22,7 @@ export function createDesktopServer({hostKey, viewerKey, iceServers = [{urls:'st
     const asset = assets.get(req.url);
     if (req.method === 'GET' && req.url === '/health') {
       res.writeHead(200, {...headers, 'Content-Type':'application/json'});
-      res.end(JSON.stringify({app:'codespace-desktop',version:'0.1.2'})); return;
+      res.end(JSON.stringify({app:'codespace-desktop',version:'0.2.0'})); return;
     }
     if (req.method !== 'GET' || !asset) { res.writeHead(404, headers); res.end('Not found'); return; }
     res.writeHead(200, {...headers, 'Content-Type':asset[1]});
@@ -29,11 +30,8 @@ export function createDesktopServer({hostKey, viewerKey, iceServers = [{urls:'st
   });
   const wss = new WebSocketServer({noServer:true, maxPayload:2*1024*1024, perMessageDeflate:false});
   const peers = {host:null, viewer:null};
-  let failures = 0;
-  const resetFailures = setInterval(() => { failures = 0; }, 60000);
-  resetFailures.unref();
   server.on('upgrade', (req, socket, head) => {
-    let valid = req.url === '/ws' && wss.clients.size < 32 && failures < 60;
+    let valid = req.url === '/ws' && wss.clients.size < 32;
     if (req.headers.origin) {
       // Browser connections must originate from this viewer, never another site.
       try {
@@ -59,6 +57,7 @@ export function createDesktopServer({hostKey, viewerKey, iceServers = [{urls:'st
   });
   wss.on('connection', ws => {
     let role;
+    let authenticating=false;
     let alive = true;
     let count = 0;
     let period = Date.now();
@@ -66,7 +65,7 @@ export function createDesktopServer({hostKey, viewerKey, iceServers = [{urls:'st
     ws.on('pong', () => { alive = true; });
     const heartbeat = setInterval(() => { if (!alive) return ws.terminate(); alive = false; ws.ping(); },15000);
     ws.on('error', error => log(`Socket error (${role || 'unauthenticated'}): ${error.code || error.name}`));
-    ws.on('message', (data, binary) => {
+    ws.on('message', async (data, binary) => {
       if (Date.now()-period > 1000) { period=Date.now(); count=0; }
       if (++count > 400) { ws.close(4008,'Too many messages'); return; }
       if (binary) {
@@ -82,20 +81,25 @@ export function createDesktopServer({hostKey, viewerKey, iceServers = [{urls:'st
       if (!msg || typeof msg !== 'object') { ws.close(4002,'Invalid message'); return; }
       if (!role) {
         const candidate=msg.role;
-        if (msg.type !== 'auth' || !['host','viewer'].includes(candidate) || !equal(msg.key, candidate==='host'?hostKey:viewerKey)) {
-          failures++; ws.close(4003,'Invalid access key'); return;
+        if(authenticating)return;
+        authenticating=true;
+        let accepted=msg.type==='auth' && ['host','viewer'].includes(candidate) && equal(msg.key,candidate==='host'?hostKey:viewerKey);
+        if(!accepted && msg.type==='auth' && candidate==='viewer' && viewerCode){
+          try{accepted=await verifyViewerCode(msg.key,viewerCode);}catch{accepted=false;}
         }
+        if(ws.readyState!==WebSocket.OPEN)return;
+        if(!accepted){ws.close(4003,'Invalid access code or key');return;}
         if (peers[candidate]) { ws.close(4009,`${candidate} already connected`); return; }
         clearTimeout(deadline); role=candidate; peers[role]=ws;
         log(`${role} authenticated`);
-        send(ws,{type:'authenticated',role,iceServers,version:'0.1.2'});
+        send(ws,{type:'authenticated',role,iceServers,version:'0.2.0'});
         if (peers.host && peers.viewer) {
           send(peers.viewer,{type:'host-ready'});
           send(peers.host,{type:'viewer-ready'});
         } else send(ws,{type:'waiting'});
         return;
       }
-      const allow=role==='host'?['offer','status','pong']:['answer','input','frame-ack','ping','mode'];
+      const allow=role==='host'?['offer','status','pong','performance']:['answer','input','frame-ack','ping','mode','feedback','quality'];
       if (!allow.includes(msg.type)) return;
       const other=peers[role==='host'?'viewer':'host'];
       // A single valid JPEG can exceed 256 KiB. Do not disconnect the viewer
@@ -113,7 +117,6 @@ export function createDesktopServer({hostKey, viewerKey, iceServers = [{urls:'st
     });
   });
   return {server, close:async () => {
-    clearInterval(resetFailures);
     for (const ws of wss.clients) ws.terminate();
     await new Promise(resolve => wss.close(resolve));
     if (server.listening) await new Promise(resolve => server.close(resolve));
@@ -129,7 +132,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const iceServers=process.env.ICE_SERVERS_JSON ? JSON.parse(process.env.ICE_SERVERS_JSON) : undefined;
   const app=createDesktopServer({...keys,iceServers,publicOrigin:origin,codespacesPort:process.env.CODESPACE_NAME ? port : undefined,log:message=>console.log(new Date().toISOString(),message)});
   app.server.listen(port,'0.0.0.0',() => {
-    console.log(`\nCodespace Desktop\nViewer: ${origin}\n\nViewer key: ${keys.viewerKey}\nMac host key: ${keys.hostKey}\n\nKeep these keys private. They are NOT GitHub tokens.\nIn Codespaces: Ports → 3000 → Port Visibility → Public.\nThe public viewer page requires its access key; the Mac uses a separate key.\nStop with Ctrl+C.\n`);
+    console.log(`\nCodespace Desktop\nViewer: ${origin}\n\n${keys.viewerCode?'Chromebook: enter your saved code.':'Viewer key: '+keys.viewerKey}\nMac host key: ${keys.hostKey}\n\nKeep your code and keys private. They are NOT GitHub tokens.\nIn Codespaces: Ports → 3000 → Port Visibility → Public.\nThe public viewer page requires its access key; the Mac uses a separate key.\nStop with Ctrl+C.\n`);
   });
   for (const signal of ['SIGINT','SIGTERM']) process.on(signal, async () => { await app.close(); process.exit(0); });
 }

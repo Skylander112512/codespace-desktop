@@ -4,6 +4,8 @@ import importlib.util
 import json
 from pathlib import Path
 import unittest
+import sys
+sys.path.insert(0,str(Path(__file__).parents[1]/"mac"))
 from unittest.mock import patch
 from websockets.asyncio.server import serve
 from websockets.http11 import Response

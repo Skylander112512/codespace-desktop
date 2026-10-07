@@ -6,3 +6,10 @@ dist/
 build/
 *.spec
 .DS_Store
+
+mac/bin/
+
+.secrets.json.tmp
+
+.build-mac/
+dist/
