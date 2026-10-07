@@ -24,7 +24,7 @@ from websockets.asyncio.client import connect
 import certifi
 from websockets.exceptions import ConnectionClosed, InvalidStatus
 
-VERSION = '0.2.0'
+VERSION = '0.2.1'
 
 
 class DirectConnect(connect):
@@ -55,6 +55,9 @@ class MacInput:
         self.point = (0, 0)
         self.last_reliable_seq = 0
         self.last_motion_seq = 0
+        self.mouse_presses = {}
+        self.last_clicks = {}
+        self.mouse_event_number = 0
         if not demo:
             import Quartz
             self.q = Quartz
@@ -80,8 +83,21 @@ class MacInput:
 
     def mouse(self, action, button=0):
         if button not in (0,1,2): return
-        if action == 'down': self.buttons.add(button)
-        if action == 'up': self.buttons.discard(button)
+        if action == 'move' and self.buttons:button=min(self.buttons)
+        if action == 'down':
+            now=time.monotonic()
+            previous=self.last_clicks.get(button)
+            count=1
+            if previous and 0<=now-previous[0]<=.5 and math.dist(self.point,previous[1])<=5:
+                count=min(3,previous[2]+1)
+            self.last_clicks[button]=(now,self.point,count)
+            self.mouse_event_number+=1
+            self.mouse_presses[button]=(count,self.mouse_event_number)
+            self.buttons.add(button)
+        metadata=self.mouse_presses.get(button)
+        if action == 'up':
+            self.buttons.discard(button)
+            self.mouse_presses.pop(button,None)
         if self.demo: return
         q = self.q
         mapped = {0:q.kCGMouseButtonLeft,1:q.kCGMouseButtonCenter,2:q.kCGMouseButtonRight}[button]
@@ -95,6 +111,11 @@ class MacInput:
             else: kind=q.kCGEventMouseMoved
         else: kind=kinds[action][button]
         event=q.CGEventCreateMouseEvent(None,kind,self.point,mapped)
+        # Quartz defaults a freshly-created mouse-up event to click count 0.
+        # Pair press, drag and release explicitly so apps recognize clicks.
+        if metadata:
+            q.CGEventSetIntegerValueField(event,q.kCGMouseEventClickState,metadata[0])
+            q.CGEventSetIntegerValueField(event,q.kCGMouseEventNumber,metadata[1])
         q.CGEventSetFlags(event,self.flags())
         q.CGEventPost(q.kCGHIDEventTap,event)
 

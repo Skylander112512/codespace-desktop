@@ -1,4 +1,4 @@
-Codespace Desktop 0.2.0 — Apple Silicon Mac / macOS 14+
+Codespace Desktop 0.2.1 — Apple Silicon Mac / macOS 14+
 
 Keep these files together. Open Start Mac Host.command.
 

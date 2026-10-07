@@ -53,7 +53,7 @@ class Integration(unittest.IsolatedAsyncioTestCase):
         agent=host.Host(demo=True)
         task=asyncio.create_task(agent.run('ws://127.0.0.1:3000/ws','synthetic-host-key-00000000000000000000'))
         peer=RTCPeerConnection(RTCConfiguration(iceServers=[]))
-        video_received=asyncio.Event();control_received=asyncio.Event()
+        video_received=asyncio.Event();control_received=asyncio.Event();channels={}
         @peer.on('track')
         def track(track):
             async def receive():
@@ -62,6 +62,8 @@ class Integration(unittest.IsolatedAsyncioTestCase):
             asyncio.create_task(receive())
         @peer.on('datachannel')
         def datachannel(channel):
+            if channel.label!='control':return
+            channels['control']=channel
             @channel.on('open')
             def opened():channel.send(json.dumps({'type':'ping','at':123}))
             @channel.on('message')
@@ -86,6 +88,13 @@ class Integration(unittest.IsolatedAsyncioTestCase):
                                 await peer.setLocalDescription(await peer.createAnswer())
                                 await ws.send(json.dumps({'type':'answer','sdp':peer.localDescription.sdp}));answered=True
                     await video_received.wait();await control_received.wait()
+                channels['control'].send(json.dumps({'type':'input','action':'down','button':0,'x':.4,'y':.5,'seq':1}))
+                await asyncio.sleep(.05)
+                self.assertEqual(agent.controls.buttons,{0})
+                channels['control'].send(json.dumps({'type':'input','action':'up','button':0,'x':.4,'y':.5,'seq':2}))
+                await asyncio.sleep(.05)
+                self.assertFalse(agent.controls.buttons)
+                self.assertFalse(agent.controls.mouse_presses)
                 await ws.send(json.dumps({'type':'input','action':'key','code':'MetaLeft','down':True}))
                 await asyncio.sleep(.1);self.assertIn('MetaLeft',agent.controls.keys)
             await asyncio.sleep(.2);self.assertFalse(agent.controls.keys);self.assertFalse(agent.active)

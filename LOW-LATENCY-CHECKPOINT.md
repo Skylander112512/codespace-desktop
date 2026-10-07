@@ -41,3 +41,9 @@ python test/test_native_video.py -v
 ```
 
 Test server binds localhost only and uses public synthetic fixture credentials. Never forward it publicly. Native Terminal UI is unavailable to computer-use tools; do not bypass a blocked tool. Tests use synthetic frames and simulated input rather than the real desktop.
+
+
+## Click repair — v0.2.1
+User confirmed excellent FPS but the pointer moves without clicks working. Terminal Accessibility is enabled (checked in System Settings). Reproduced a concrete native event bug: freshly-created mouse-up has click count 0, and the old host never sets matching click counts/event numbers. Added explicit press metadata for down, drag, and up; nearby rapid clicks increment the count. Three regression tests failed before the repair and pass afterward, using real Quartz event objects with CGEventPost intercepted (no real desktop input).
+
+13 Node tests, 5 host integration tests (now including button press/release over the control data channel), 3 latency/settings tests, and 3 native mouse-event tests pass. Native video encoding is unchanged. Built and ad-hoc verified v0.2.1 Mac package; installed a separate Downloads/Codespace Desktop Mac 0.2.1 folder. Running v0.2.0 host has not been interrupted. User must restart into the new host for actual click confirmation. This host fix works with the existing v0.2.0 Codespaces server; no server restart is required for clicks. Publish the patch release and update status here.
