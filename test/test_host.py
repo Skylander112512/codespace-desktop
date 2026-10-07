@@ -50,10 +50,16 @@ class Integration(unittest.IsolatedAsyncioTestCase):
                 await host.Host(demo=True).run(f'ws://127.0.0.1:{port}/ws','x'*43)
 
     async def test_webrtc_relay_and_session_reconnect(self):
+        await self.check_webrtc_session(input_protocol=None)
+
+    async def test_modern_viewer_uses_separate_motion_channel(self):
+        await self.check_webrtc_session(input_protocol=2)
+
+    async def check_webrtc_session(self,input_protocol):
         agent=host.Host(demo=True)
         task=asyncio.create_task(agent.run('ws://127.0.0.1:3000/ws','synthetic-host-key-00000000000000000000'))
         peer=RTCPeerConnection(RTCConfiguration(iceServers=[]))
-        video_received=asyncio.Event();control_received=asyncio.Event();channels={}
+        video_received=asyncio.Event();control_received=asyncio.Event();channels={};labels=[]
         @peer.on('track')
         def track(track):
             async def receive():
@@ -62,6 +68,7 @@ class Integration(unittest.IsolatedAsyncioTestCase):
             asyncio.create_task(receive())
         @peer.on('datachannel')
         def datachannel(channel):
+            labels.append(channel.label)
             if channel.label!='control':return
             channels['control']=channel
             @channel.on('open')
@@ -86,8 +93,10 @@ class Integration(unittest.IsolatedAsyncioTestCase):
                             if msg.get('type')=='offer':
                                 await peer.setRemoteDescription(RTCSessionDescription(sdp=msg['sdp'],type='offer'))
                                 await peer.setLocalDescription(await peer.createAnswer())
-                                await ws.send(json.dumps({'type':'answer','sdp':peer.localDescription.sdp}));answered=True
+                                await ws.send(json.dumps({'type':'answer','sdp':peer.localDescription.sdp,'inputProtocol':input_protocol}));answered=True
                     await video_received.wait();await control_received.wait()
+                await asyncio.sleep(.1)
+                self.assertEqual(set(labels),{'control','motion'} if input_protocol==2 else {'control'})
                 channels['control'].send(json.dumps({'type':'input','action':'down','button':0,'x':.4,'y':.5,'seq':1}))
                 await asyncio.sleep(.05)
                 self.assertEqual(agent.controls.buttons,{0})

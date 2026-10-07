@@ -109,7 +109,7 @@ async function offer(msg){
       const timer=setTimeout(resolve,7000);
       peer.addEventListener('icegatheringstatechange',()=>{if(peer.iceGatheringState==='complete'){clearTimeout(timer);resolve();}});
     });
-    if(generation===current && pc===peer)signal({type:'answer',sdp:peer.localDescription.sdp,quality:$('quality').value||'smooth'});
+    if(generation===current && pc===peer)signal({type:'answer',sdp:peer.localDescription.sdp,inputProtocol:2,quality:$('quality').value||'smooth'});
   }catch(error){if(generation===current){detail(`Direct connection unavailable (${error.name}); using relay.`);status('Direct connection unavailable. Using compatibility relay.');}}
 }
 function receive(msg){

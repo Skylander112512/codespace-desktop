@@ -24,7 +24,7 @@ from websockets.asyncio.client import connect
 import certifi
 from websockets.exceptions import ConnectionClosed, InvalidStatus
 
-VERSION = '0.2.1'
+VERSION = '0.2.2'
 
 
 class DirectConnect(connect):
@@ -228,7 +228,7 @@ class Host:
         self.capture=Capture(demo); self.controls=MacInput(demo)
         self.prefer_native=(not demo) if native is None else native
         self.native=None; self.quality=AdaptiveQuality(); self.on_authenticated=None
-        self.pc=None; self.channel=None; self.ws=None; self.active=False; self.rtc=False
+        self.pc=None; self.channel=None; self.motion=None; self.ws=None; self.active=False; self.rtc=False
         self.tasks=set(); self.ice_servers=[]; self.ack=asyncio.Event()
         self.ack.set()
 
@@ -243,7 +243,7 @@ class Host:
         self.tasks.clear()
         if self.pc:await self.pc.close(); self.pc=None
         if self.native:await self.native.close(); self.native=None
-        self.channel=None; self.controls.release(); self.ack.set()
+        self.channel=None; self.motion=None; self.controls.release(); self.ack.set()
         self.controls.last_reliable_seq=0; self.controls.last_motion_seq=0
 
     async def start_session(self):
@@ -292,15 +292,6 @@ class Host:
                     elif msg.get('type')=='ping':channel.send(json.dumps({'type':'pong','at':msg.get('at')}))
                     elif msg.get('type')=='feedback':self.feedback(msg)
                 except (ValueError,TypeError,KeyError):pass
-            motion=pc.createDataChannel('motion',ordered=False,maxRetransmits=0)
-            @motion.on('message')
-            def mouse_motion(message):
-                if not self.active or not isinstance(message,str) or len(message)>1024:return
-                try:
-                    msg=json.loads(message)
-                    if isinstance(msg,dict) and msg.get('type')=='input' and msg.get('action')=='move':
-                        self.controls.handle(msg)
-                except (ValueError,TypeError,KeyError):pass
             @pc.on('connectionstatechange')
             async def connection_state():
                 log(f'Direct video: {pc.connectionState}')
@@ -317,6 +308,18 @@ class Host:
         except Exception as error:
             log(f'Direct connection unavailable: {type(error).__name__}: {error}. Relay remains available.')
             await self.send({'type':'status','text':'Direct connection unavailable. Using compatibility relay.'})
+
+    def enable_motion_channel(self):
+        if self.motion:return
+        motion=self.pc.createDataChannel('motion',ordered=False,maxRetransmits=0); self.motion=motion
+        @motion.on('message')
+        def mouse_motion(message):
+            if not self.active or not isinstance(message,str) or len(message)>1024:return
+            try:
+                msg=json.loads(message)
+                if isinstance(msg,dict) and msg.get('type')=='input' and msg.get('action')=='move':
+                    self.controls.handle(msg)
+            except (ValueError,TypeError,KeyError):pass
 
     def feedback(self,msg):
         if self.native and not self.native.failure:
@@ -407,6 +410,9 @@ class Host:
                                     except Exception:
                                         await native.close(); self.sender.replaceTrack(ScreenTrack(self.capture))
                             await self.pc.setRemoteDescription(RTCSessionDescription(sdp=msg['sdp'],type='answer'))
+                            # Old viewers assign every channel to their control
+                            # variable. A second channel would swallow clicks.
+                            if msg.get('inputProtocol')==2:self.enable_motion_channel()
                         except Exception:await self.send({'type':'status','text':'Using compatibility relay.'})
                     elif kind=='input' and self.active:
                         with contextlib.suppress(ValueError,TypeError,KeyError):self.controls.handle(msg)

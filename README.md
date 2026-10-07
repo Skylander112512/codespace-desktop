@@ -8,7 +8,7 @@ This is a working prototype, not a signed commercial remote-desktop product. It 
 
 Open [Skylander112512/codespace-desktop](https://github.com/Skylander112512/codespace-desktop) on the Chromebook. Select **Code → Codespaces** and open your existing Codespace, or create one on `main`.
 
-For an existing Codespace, stop `npm start` with Ctrl+C, then run `git pull --ff-only` before restarting it. Download the matching Mac host from the [latest release](https://github.com/Skylander112512/codespace-desktop/releases/latest). Version **0.2.1** fixes Mac clicks by preserving matching click counts and event numbers on mouse press, drag, and release. Version **0.2.0** added Apple hardware video encoding, adaptive quality, faster mouse delivery, a private Chromebook code, and saved Mac connection details. Replace the old Mac folder, including its bundled executable; replacing only the launcher does not update the host.
+For an existing Codespace, stop `npm start` with Ctrl+C, then run `git pull --ff-only` before restarting it. Download the matching Mac host from the [latest release](https://github.com/Skylander112512/codespace-desktop/releases/latest). Version **0.2.2** also keeps clicks and keys working with older viewers by enabling the separate motion channel only when the viewer supports it. Refresh the viewer after updating Codespaces. Version **0.2.1** fixes Mac clicks by preserving matching click counts and event numbers on mouse press, drag, and release. Version **0.2.0** added Apple hardware video encoding, adaptive quality, faster mouse delivery, a private Chromebook code, and saved Mac connection details. Replace the old Mac folder, including its bundled executable; replacing only the launcher does not update the host.
 
 ## 2. Start the server in Codespaces
 
@@ -64,7 +64,7 @@ The viewer stays on the key form until the server accepts the key. A failed conn
 - **Screen capture failed:** enable Screen Recording for the launching host/Terminal and restart it.
 - **Video works but input does not:** enable Accessibility for the host/Terminal and restart it. The host reports when that permission is off.
 
-The Mac window now stays open on errors. Its timestamped messages show capture, first-frame delivery, ICE, and direct-video states. The Codespaces terminal records socket close codes. Version 0.2.1 appears in both the host banner and browser connection details.
+The Mac window now stays open on errors. Its timestamped messages show capture, first-frame delivery, ICE, and direct-video states. The Codespaces terminal records socket close codes. Version 0.2.2 appears in both the host banner and browser connection details.
 
 ## Latency and network behavior
 

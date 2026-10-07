@@ -22,7 +22,7 @@ export function createDesktopServer({hostKey, viewerKey, viewerCode, iceServers 
     const asset = assets.get(req.url);
     if (req.method === 'GET' && req.url === '/health') {
       res.writeHead(200, {...headers, 'Content-Type':'application/json'});
-      res.end(JSON.stringify({app:'codespace-desktop',version:'0.2.1'})); return;
+      res.end(JSON.stringify({app:'codespace-desktop',version:'0.2.2'})); return;
     }
     if (req.method !== 'GET' || !asset) { res.writeHead(404, headers); res.end('Not found'); return; }
     res.writeHead(200, {...headers, 'Content-Type':asset[1]});
@@ -92,7 +92,7 @@ export function createDesktopServer({hostKey, viewerKey, viewerCode, iceServers 
         if (peers[candidate]) { ws.close(4009,`${candidate} already connected`); return; }
         clearTimeout(deadline); role=candidate; peers[role]=ws;
         log(`${role} authenticated`);
-        send(ws,{type:'authenticated',role,iceServers,version:'0.2.1'});
+        send(ws,{type:'authenticated',role,iceServers,version:'0.2.2'});
         if (peers.host && peers.viewer) {
           send(peers.viewer,{type:'host-ready'});
           send(peers.host,{type:'viewer-ready'});
