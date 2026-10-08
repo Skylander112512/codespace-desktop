@@ -3,3 +3,5 @@
 #connection-error{color:#ffc0bc;margin-bottom:0}#connection-details{margin-top:20px;color:#a7b3c5;font-size:12px}#connection-details summary{cursor:pointer}#details-log{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.7;background:#141d2b;padding:16px;border-radius:8px}.pill{max-width:50%;overflow-wrap:anywhere}
 
 #quality{font:inherit;color:inherit;background:#152638;border:1px solid #355069;border-radius:6px;padding:5px}
+
+.tab-choice h2{font-size:22px;font-weight:550;margin:0 0 10px}.tab-choice>p{margin-top:10px}.tab-choice .quiet{padding:13px 21px;font-size:13px}#tab-error{color:#ffc0bc}

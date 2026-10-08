@@ -24,7 +24,7 @@ test('keys, secrets and unknown paths never appear in HTTP responses',async t=>{
   const {base}=await fixture(t);
   for(const path of ['/.secrets.json','/../server.mjs','/mac/host.py'])assert.equal((await fetch(base+path)).status,404);
   const page=await fetch(base);assert.equal(page.status,200);
-  assert.match(page.headers.get('content-security-policy'),/frame-ancestors 'none'/);
+  assert.match(page.headers.get('content-security-policy'),/frame-ancestors 'self'/);
   assert.ok(!(await page.text()).includes('h'.repeat(43)));
 });
 test('wrong keys rejected, roles separated, duplicate peer cannot take over',async t=>{
@@ -70,7 +70,7 @@ test('a queued JPEG does not close the viewer when a pong follows it', async t=>
 
 test('health endpoint identifies the deployed version without exposing credentials',async t=>{
   const {base}=await fixture(t);
-  assert.deepEqual(await (await fetch(base+'/health')).json(),{app:'codespace-desktop',version:'0.2.6'});
+  assert.deepEqual(await (await fetch(base+'/health')).json(),{app:'codespace-desktop',version:'0.2.7'});
 });
 
 

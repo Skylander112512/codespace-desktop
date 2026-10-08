@@ -14,16 +14,19 @@ export function createDesktopServer({hostKey, viewerKey, viewerCode, iceServers 
   const assets = new Map([
     ['/', ['public/index.html','text/html; charset=utf-8']],
     ['/client.js', ['public/client.js','text/javascript; charset=utf-8']],
+    ['/launch.js', ['public/launch.js','text/javascript; charset=utf-8']],
+    ['/cloak.css', ['public/cloak.css','text/css; charset=utf-8']],
+    ['/cloak-icon.svg', ['public/cloak-icon.svg','image/svg+xml']],
     ['/video-quality.js', ['public/video-quality.js','text/javascript; charset=utf-8']],
     ['/style.css', ['public/style.css','text/css; charset=utf-8']],
   ]);
   const server = http.createServer((req, res) => {
     const headers = {'Cache-Control':'no-store', 'X-Content-Type-Options':'nosniff', 'Referrer-Policy':'no-referrer',
-      'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob:; media-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"};
+      'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob:; media-src 'self' blob:; connect-src 'self'; frame-src 'self'; frame-ancestors 'self'; base-uri 'none'; form-action 'self'"};
     const asset = assets.get(req.url);
     if (req.method === 'GET' && req.url === '/health') {
       res.writeHead(200, {...headers, 'Content-Type':'application/json'});
-      res.end(JSON.stringify({app:'codespace-desktop',version:'0.2.6'})); return;
+      res.end(JSON.stringify({app:'codespace-desktop',version:'0.2.7'})); return;
     }
     if (req.method !== 'GET' || !asset) { res.writeHead(404, headers); res.end('Not found'); return; }
     res.writeHead(200, {...headers, 'Content-Type':asset[1]});
@@ -93,7 +96,7 @@ export function createDesktopServer({hostKey, viewerKey, viewerCode, iceServers 
         if (peers[candidate]) { ws.close(4009,`${candidate} already connected`); return; }
         clearTimeout(deadline); role=candidate; peers[role]=ws;
         log(`${role} authenticated`);
-        send(ws,{type:'authenticated',role,iceServers,version:'0.2.6'});
+        send(ws,{type:'authenticated',role,iceServers,version:'0.2.7'});
         if (peers.host && peers.viewer) {
           send(peers.viewer,{type:'host-ready'});
           send(peers.host,{type:'viewer-ready'});
