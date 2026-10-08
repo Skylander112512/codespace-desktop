@@ -5,10 +5,10 @@ import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
 
 function browser(){
-  const nodes=new Map();
+  const nodes=new Map();const documentHandlers={};
   const get=id=>{
     if(!nodes.has(id))nodes.set(id,{hidden:['desktop','connection-error'].includes(id),value:'',textContent:'',handlers:{},
-      addEventListener(type,fn){this.handlers[type]=fn;},removeAttribute(){},checked:false});
+      addEventListener(type,fn){this.handlers[type]=fn;},removeAttribute(){},focus(){},hasPointerCapture(){return false;},checked:false});
     return nodes.get(id);
   };
   class Socket {
@@ -17,12 +17,12 @@ function browser(){
     send(data){this.sent.push(JSON.parse(data));}
     close(code,reason){this.readyState=3;this.onclose({code,reason});}
   }
-  const context={receiveQuality,document:{getElementById:get,body:{classList:{add(){},remove(){}}},addEventListener(){}},
+  const context={receiveQuality,document:{getElementById:get,body:{classList:{add(){},remove(){}}},addEventListener(name,fn){documentHandlers[name]=fn;},exitPointerLock(){this.pointerLockElement=null;}},
     window:{addEventListener(){}},location:{protocol:'https:',host:'example.test'},WebSocket:Socket,
     performance:{now:()=>100},setInterval:()=>1,clearInterval(){},setTimeout:()=>1,clearTimeout(){}};
   vm.createContext(context);
   vm.runInContext(readFileSync(new URL('../public/client.js',import.meta.url),'utf8').replace(/^import .*;\n/,''),context);
-  return {get,Socket,run:code=>vm.runInContext(code,context),context,submit(){get('key').value='viewer-test-key';get('connect-form').handlers.submit({preventDefault(){}});return Socket.latest;}};
+  return {get,Socket,documentHandlers,run:code=>vm.runInContext(code,context),context,submit(){get('key').value='viewer-test-key';get('connect-form').handlers.submit({preventDefault(){}});return Socket.latest;}};
 }
 
 test('viewer stays on login until authenticated and retains a rejected key',()=>{
@@ -98,4 +98,47 @@ test('authentication rejection after a retry clears memory and requires user inp
   b.Socket.latest.close(4003,'Invalid access code');
   assert.equal(b.run('sessionKey'),null);assert.equal(b.run('keepTrying'),false);
   assert.equal(b.get('login').hidden,false);
+});
+
+
+test('game mouse accumulates relative movement and routes it over motion transport',()=>{
+  const b=browser();b.submit();
+  b.run('relativeMouseAvailable=true');
+  b.run(`useRTC=true;channel={readyState:'open',bufferedAmount:0,send(){}};
+    motionChannel={readyState:'open',bufferedAmount:0,sent:[],send(data){this.sent.push(JSON.parse(data));}};`);
+  b.context.document.pointerLockElement=b.get('screen');
+  b.documentHandlers.pointerlockchange();
+  b.documentHandlers.mousemove({movementX:8,movementY:-2});
+  b.documentHandlers.mousemove({movementX:5,movementY:3});
+  b.run('flushMotion()');
+  const input=b.run('motionChannel.sent[0]');
+  assert.equal(input.action,'look');assert.equal(input.dx,13);assert.equal(input.dy,1);
+  assert.equal(input.after,b.run('lastReliable'));
+  assert.equal(b.run('pendingMotion'),null);
+});
+
+test('locked clicks stay relative and unlock releases held input and queued turns',()=>{
+  const b=browser(),ws=b.submit();
+  b.run('relativeMouseAvailable=true');
+  b.context.document.pointerLockElement=b.get('screen');b.documentHandlers.pointerlockchange();
+  b.get('screen').onpointerdown({button:2,preventDefault(){}});
+  assert.equal(ws.sent.at(-1).relative,true);assert.equal(ws.sent.at(-1).button,2);
+  b.documentHandlers.mousemove({movementX:12,movementY:0});
+  b.context.document.pointerLockElement=null;b.documentHandlers.pointerlockchange();
+  assert.equal(ws.sent.at(-1).action,'release');assert.equal(b.run('pendingMotion'),null);
+  assert.equal(b.get('game-mouse').textContent,'Game mouse');
+  b.run('flushMotion()');assert.equal(ws.sent.at(-1).action,'release');
+});
+
+test('Esc exits pointer lock without sending Escape to the game',()=>{
+  const b=browser(),ws=b.submit();b.context.document.pointerLockElement=b.get('screen');
+  b.get('screen').onkeydown({code:'Escape'});
+  assert.equal(b.context.document.pointerLockElement,null);
+  assert.equal(ws.sent.at(-1).action,'release');
+});
+
+test('late pointer lock after disconnect immediately releases the browser mouse',()=>{
+  const b=browser();b.submit();b.run('cleanup()');
+  b.context.document.pointerLockElement=b.get('screen');b.documentHandlers.pointerlockchange();
+  assert.equal(b.context.document.pointerLockElement,null);
 });

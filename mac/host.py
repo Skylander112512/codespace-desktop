@@ -25,7 +25,7 @@ from websockets.asyncio.client import connect
 import certifi
 from websockets.exceptions import ConnectionClosed, InvalidStatus
 
-VERSION = '0.2.4'
+VERSION = '0.2.5'
 
 
 class DirectConnect(connect):
@@ -59,6 +59,8 @@ class MacInput:
         self.mouse_presses = {}
         self.last_clicks = {}
         self.mouse_event_number = 0
+        self.relative_mouse = False
+        self.relative_remainder = (0.0, 0.0)
         if not demo:
             import Quartz
             self.q = Quartz
@@ -82,7 +84,7 @@ class MacInput:
         q.CGEventSetFlags(event, self.flags())
         q.CGEventPost(q.kCGHIDEventTap, event)
 
-    def mouse(self, action, button=0):
+    def mouse(self, action, button=0, delta=None):
         if button not in (0,1,2): return
         if action == 'move' and self.buttons:button=min(self.buttons)
         if action == 'down':
@@ -117,10 +119,34 @@ class MacInput:
         if metadata:
             q.CGEventSetIntegerValueField(event,q.kCGMouseEventClickState,metadata[0])
             q.CGEventSetIntegerValueField(event,q.kCGMouseEventNumber,metadata[1])
+        if delta is not None:
+            q.CGEventSetIntegerValueField(event,q.kCGMouseEventDeltaX,delta[0])
+            q.CGEventSetIntegerValueField(event,q.kCGMouseEventDeltaY,delta[1])
         q.CGEventSetFlags(event,self.flags())
         q.CGEventPost(q.kCGHIDEventTap,event)
 
-    def release(self):
+    def set_relative_mouse(self, enabled):
+        self.relative_mouse=enabled
+        self.relative_remainder=(0.0,0.0)
+        if enabled:
+            if not self.demo:
+                b=self.bounds
+                self.point=(b.origin.x+b.size.width/2,b.origin.y+b.size.height/2)
+            self.mouse('move',delta=(0,0))
+
+    def look(self, dx, dy):
+        if not self.relative_mouse:return
+        if not all(type(v) in (int,float) and math.isfinite(v) and abs(v)<=4096 for v in (dx,dy)):return
+        x,y=self.relative_remainder
+        x+=dx;y+=dy
+        delta=(math.trunc(x),math.trunc(y))
+        self.relative_remainder=(x-delta[0],y-delta[1])
+        # Keep the event location centered; games read the movement deltas.
+        # Never disassociate the user's physical mouse from its system cursor.
+        if delta!=(0,0):self.mouse('move',delta=delta)
+
+    def release(self, keep_relative=False):
+        if not keep_relative:self.set_relative_mouse(False)
         for code in list(self.keys): self.keyboard(code,False)
         for button in list(self.buttons): self.mouse('up',button)
 
@@ -129,7 +155,7 @@ class MacInput:
         seq=msg.get('seq')
         if seq is not None:
             if type(seq) is not int or not 0 < seq <= 2**53-1: return
-            if action == 'move':
+            if action in ('move','look'):
                 after=msg.get('after',0)
                 if type(after) is not int or after > self.last_reliable_seq: return
                 if seq <= max(self.last_reliable_seq,self.last_motion_seq): return
@@ -139,6 +165,9 @@ class MacInput:
                 self.last_reliable_seq=seq
         self.last_input=time.monotonic()
         if action=='release': self.release()
+        elif action=='pointer-lock' and isinstance(msg.get('enabled'),bool):
+            self.release();self.set_relative_mouse(msg['enabled'])
+        elif action=='look':self.look(msg.get('dx'),msg.get('dy'))
         elif action=='key' and isinstance(msg.get('down'),bool): self.keyboard(msg.get('code'),msg['down'])
         elif action=='tap':
             self.keyboard(msg.get('code'),True); self.keyboard(msg.get('code'),False)
@@ -146,6 +175,9 @@ class MacInput:
             self.keyboard('MetaLeft',True); self.keyboard('Tab',True)
             self.keyboard('Tab',False); self.keyboard('MetaLeft',False)
         elif action in ('move','down','up'):
+            if self.relative_mouse:
+                if action in ('down','up') and msg.get('relative') is True:self.mouse(action,msg.get('button',0))
+                return
             x,y=msg.get('x'),msg.get('y')
             if not all(isinstance(v,(int,float)) and math.isfinite(v) and 0<=v<=1 for v in (x,y)): return
             if not self.demo:
@@ -250,7 +282,7 @@ class Host:
     async def start_session(self):
         await self.end_session(); self.active=True
         print('Viewer connected. Close this window or press Ctrl+C to stop access.',flush=True)
-        await self.send({'type':'status','text':f'Mac host {VERSION} connected. Starting screen capture…'})
+        await self.send({'type':'status','text':f'Mac host {VERSION} connected. Starting screen capture…','relativeMouse':True})
         self.quality=AdaptiveQuality()
         self.tasks={asyncio.create_task(self.relay()),asyncio.create_task(self.negotiate()),asyncio.create_task(self.telemetry())}
 
@@ -318,7 +350,7 @@ class Host:
             if not self.active or not isinstance(message,str) or len(message)>1024:return
             try:
                 msg=json.loads(message)
-                if isinstance(msg,dict) and msg.get('type')=='input' and msg.get('action')=='move':
+                if isinstance(msg,dict) and msg.get('type')=='input' and msg.get('action') in ('move','look'):
                     self.controls.handle(msg)
             except (ValueError,TypeError,KeyError):pass
 
@@ -371,7 +403,7 @@ class Host:
         while True:
             await asyncio.sleep(1)
             # Release held buttons/keys after a dead connection, including a lost browser focus event.
-            if time.monotonic()-self.controls.last_input>10:self.controls.release()
+            if time.monotonic()-self.controls.last_input>10:self.controls.release(keep_relative=True)
 
     async def run(self,url,key):
         watchdog=asyncio.create_task(self.watchdog())

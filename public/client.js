@@ -5,6 +5,7 @@ let useRTC=false, statsTimer, connectTimer;
 let reconnectTimer, reconnectDelay=2000, sessionKey=null, keepTrying=false, authenticatedAt=0;
 let lastVideoAt=0, previousStats, polling=false, nativeStats={};
 let inputSequence=0, lastReliable=0, pendingMotion=null, motionTimer;
+let relativeMouseAvailable=false;
 const events=[];
 function detail(text){
   events.push(`${new Date().toLocaleTimeString()} · ${text}`);
@@ -22,27 +23,31 @@ const signal=msg=>{if(ws?.readyState===WebSocket.OPEN)ws.send(JSON.stringify(msg
 function control(msg){
   if(msg.type==='input'){
     msg={...msg,seq:++inputSequence};
-    if(msg.action==='move')msg.after=lastReliable;
+    if(msg.action==='move'||msg.action==='look')msg.after=lastReliable;
     else {lastReliable=msg.seq;pendingMotion=null;clearTimeout(motionTimer);motionTimer=null;}
   }
   const data=JSON.stringify(msg);
   if(useRTC && channel?.readyState==='open'){
-    if(msg.action==='move' && motionChannel?.readyState==='open'){
+    if((msg.action==='move'||msg.action==='look') && motionChannel?.readyState==='open'){
       if(motionChannel.bufferedAmount<2048)motionChannel.send(data);
       return; // Stale movement is disposable; clicks and keys remain reliable.
     }
     if(channel.bufferedAmount<128000){channel.send(data);return;}
     channel.close(); // Bound the queue; release keys before changing transport.
+    if(document.pointerLockElement===$('screen'))document.exitPointerLock?.();
     if(msg.type==='input'){
       signal({type:'input',action:'release',seq:++inputSequence});lastReliable=inputSequence;
       return;
     }
   }
-  if(msg.action==='move' && ws?.bufferedAmount>16000)return;
+  if((msg.action==='move'||msg.action==='look') && ws?.bufferedAmount>16000)return;
   signal(msg);
 }
-function release(){held.clear();control({type:'input',action:'release'});}
-function closeRTC(){if(pc){pc.close();pc=null;}channel=null;motionChannel=null;useRTC=false;$('video').srcObject=null;$('video').hidden=true;lastVideoAt=0;previousStats=null;nativeStats={};$('performance').textContent='';}
+function release(){
+  if(document.pointerLockElement===$('screen'))document.exitPointerLock?.();
+  held.clear();control({type:'input',action:'release'});
+}
+function closeRTC(){if(document.pointerLockElement===$('screen'))release();if(pc){pc.close();pc=null;}channel=null;motionChannel=null;useRTC=false;$('video').srcObject=null;$('video').hidden=true;lastVideoAt=0;previousStats=null;nativeStats={};$('performance').textContent='';}
 async function sampleStats(){
   const peer=pc;
   if(!peer || polling)return;
@@ -87,7 +92,7 @@ function chooseMode(){
   $('video').hidden=!useRTC;$('frame').hidden=useRTC||!gotFrame;
   $('mode-label').textContent=useRTC?'Direct / WebRTC video':'Compatibility relay';
   if(gotFrame||useRTC)$('placeholder').hidden=true;
-  if(useRTC)status('Connected · click the screen to use your Mac');
+  if(useRTC)status(document.pointerLockElement===$('screen')?'Game mouse on · move to turn · Esc releases mouse':'Connected · click the screen to use your Mac');
   else if(gotFrame)status('Connected through Codespaces relay · click the screen to use your Mac');
 }
 async function offer(msg){
@@ -132,9 +137,13 @@ function receive(msg){
   if(msg.type==='host-ready'){status('Mac found. Connecting…');detail('Mac authenticated. Waiting for its first screen frame.');}
   if(msg.type==='offer')offer(msg);
   if(msg.type==='performance')nativeStats=msg;
-  if(msg.type==='status'){status(msg.text);detail(msg.text);}
+  if(msg.type==='status'){
+    if(msg.relativeMouse===true){relativeMouseAvailable=true;$('game-mouse').disabled=false;}
+    status(msg.text);detail(msg.text);
+  }
   if(msg.type==='pong')$('latency').textContent=`${Math.max(0,Math.round(performance.now()-msg.at))} ms control round trip`;
   if(msg.type==='peer-left'){
+    relativeMouseAvailable=false;$('game-mouse').disabled=true;
     detail('Mac disconnected; the viewer remains connected to Codespaces.');
     release();closeRTC();generation++;gotFrame=false;
     $('frame').hidden=true;$('placeholder').hidden=false;$('mode-label').textContent='Mac offline';
@@ -198,6 +207,7 @@ function connectWithKey(key){
 }
 
 function cleanup(reconnecting=false){
+  relativeMouseAvailable=false;$('game-mouse').disabled=true;
   generation++;pendingMotion=null;clearTimeout(motionTimer);motionTimer=null;clearInterval(statsTimer);clearTimeout(connectTimer);$('connect-button').disabled=false;closeRTC();ws=null;held.clear();gotFrame=false;
   if(frameURL){URL.revokeObjectURL(frameURL);frameURL=null;}
   $('frame').removeAttribute('src');$('frame').hidden=true;$('placeholder').hidden=false;
@@ -224,19 +234,51 @@ function position(e){
   return {x:Math.max(0,Math.min(1,x)),y:Math.max(0,Math.min(1,y))};
 }
 const screen=$('screen');
+const gameMouseLocked=()=>document.pointerLockElement===screen;
+$('game-mouse').onclick=async()=>{
+  if(gameMouseLocked()){release();return;}
+  if(!relativeMouseAvailable){status('Update the Mac host to use Game mouse.');return;}
+  if(!screen.requestPointerLock){status('Game mouse is unavailable in this browser.');return;}
+  try{
+    try{await screen.requestPointerLock({unadjustedMovement:true});}
+    catch(error){if(error.name==='NotSupportedError')await screen.requestPointerLock();else throw error;}
+  }catch{status('Mouse lock was blocked. Click Game mouse again in a full browser tab.');}
+};
+document.addEventListener('pointerlockchange',()=>{
+  const locked=gameMouseLocked();
+  if(locked && (!relativeMouseAvailable || ws?.readyState!==WebSocket.OPEN)){
+    document.exitPointerLock?.();return;
+  }
+  held.clear();control({type:'input',action:'release'});
+  if(locked){screen.focus();control({type:'input',action:'pointer-lock',enabled:true});}
+  $('game-mouse').textContent=locked?'Game mouse · Esc to exit':'Game mouse';
+  status(locked?'Game mouse on · move to turn · Esc releases mouse':'Game mouse off · normal pointer restored');
+});
+function flushMotion(){
+  motionTimer=null;const latest=pendingMotion;pendingMotion=null;
+  if(latest)control({type:'input',...latest});
+}
+document.addEventListener('mousemove',e=>{
+  if(!gameMouseLocked())return;
+  const dx=e.movementX,dy=e.movementY;
+  if(!Number.isFinite(dx)||!Number.isFinite(dy))return;
+  const previous=pendingMotion?.action==='look'?pendingMotion:{dx:0,dy:0};
+  // Relative deltas add up; replacing them would discard turns at high polling rates.
+  pendingMotion={action:'look',dx:Math.max(-4096,Math.min(4096,previous.dx+dx)),dy:Math.max(-4096,Math.min(4096,previous.dy+dy))};
+  if(!motionTimer)motionTimer=setTimeout(flushMotion,8);
+});
 screen.oncontextmenu=e=>e.preventDefault();
-screen.onpointerdown=e=>{const pos=position(e);if(!pos)return;e.preventDefault();screen.focus();screen.setPointerCapture(e.pointerId);control({type:'input',action:'down',button:e.button,...pos});};
-screen.onpointerup=e=>{const pos=position(e);if(pos)control({type:'input',action:'up',button:e.button,...pos});if(screen.hasPointerCapture(e.pointerId))screen.releasePointerCapture(e.pointerId);};
+screen.onpointerdown=e=>{const locked=gameMouseLocked();const pos=locked?{relative:true}:position(e);if(!pos)return;e.preventDefault();screen.focus();if(!locked)screen.setPointerCapture(e.pointerId);control({type:'input',action:'down',button:e.button,...pos});};
+screen.onpointerup=e=>{const pos=gameMouseLocked()?{relative:true}:position(e);if(pos)control({type:'input',action:'up',button:e.button,...pos});if(screen.hasPointerCapture(e.pointerId))screen.releasePointerCapture(e.pointerId);};
 screen.onpointercancel=release;
 screen.onpointermove=e=>{
-  const pos=position(e);if(!pos)return;pendingMotion=pos;
-  if(motionTimer)return;
-  motionTimer=setTimeout(()=>{motionTimer=null;const latest=pendingMotion;pendingMotion=null;
-    if(latest)control({type:'input',action:'move',...latest});},8);
+  if(gameMouseLocked())return;
+  const pos=position(e);if(!pos)return;pendingMotion={action:'move',...pos};
+  if(!motionTimer)motionTimer=setTimeout(flushMotion,8);
 };
 screen.addEventListener('wheel',e=>{e.preventDefault();control({type:'input',action:'scroll',dy:e.deltaY*(e.deltaMode===1?16:1),dx:e.deltaX*(e.deltaMode===1?16:1)});},{passive:false});
 const mapped=code=>$('map-ctrl').checked&&code.startsWith('Control')?code.replace('Control','Meta'):code;
-screen.onkeydown=e=>{if(e.code==='Escape'&&document.fullscreenElement)return;e.preventDefault();const code=mapped(e.code);held.add(code);control({type:'input',action:'key',code,down:true});};
+screen.onkeydown=e=>{if(e.code==='Escape'&&gameMouseLocked()){release();return;}if(e.code==='Escape'&&document.fullscreenElement)return;e.preventDefault();const code=mapped(e.code);held.add(code);control({type:'input',action:'key',code,down:true});};
 screen.onkeyup=e=>{e.preventDefault();const code=mapped(e.code);held.delete(code);control({type:'input',action:'key',code,down:false});};
 screen.onblur=release;window.addEventListener('blur',release);
 document.addEventListener('visibilitychange',()=>{if(document.hidden)release();});

@@ -69,8 +69,8 @@ class Integration(unittest.IsolatedAsyncioTestCase):
         @peer.on('datachannel')
         def datachannel(channel):
             labels.append(channel.label)
+            channels[channel.label]=channel
             if channel.label!='control':return
-            channels['control']=channel
             @channel.on('open')
             def opened():channel.send(json.dumps({'type':'ping','at':123}))
             @channel.on('message')
@@ -104,6 +104,16 @@ class Integration(unittest.IsolatedAsyncioTestCase):
                 await asyncio.sleep(.05)
                 self.assertFalse(agent.controls.buttons)
                 self.assertFalse(agent.controls.mouse_presses)
+                channels['control'].send(json.dumps({'type':'input','action':'pointer-lock','enabled':True,'seq':3}))
+                await asyncio.sleep(.05)
+                self.assertTrue(agent.controls.relative_mouse)
+                movement=channels.get('motion',channels['control'])
+                movement.send(json.dumps({'type':'input','action':'look','dx':.5,'dy':-.25,'seq':4,'after':3}))
+                await asyncio.sleep(.05)
+                self.assertEqual(agent.controls.relative_remainder,(.5,-.25))
+                channels['control'].send(json.dumps({'type':'input','action':'release','seq':5}))
+                await asyncio.sleep(.05)
+                self.assertFalse(agent.controls.relative_mouse)
                 await ws.send(json.dumps({'type':'input','action':'key','code':'MetaLeft','down':True}))
                 await asyncio.sleep(.1);self.assertIn('MetaLeft',agent.controls.keys)
             await asyncio.sleep(.2);self.assertFalse(agent.controls.keys);self.assertFalse(agent.active)
