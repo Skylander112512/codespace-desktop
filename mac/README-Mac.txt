@@ -1,4 +1,4 @@
-Codespace Desktop 0.2.5 — Apple Silicon Mac / macOS 14+
+Codespace Desktop 0.2.6 — Apple Silicon Mac / macOS 14+
 
 Keep these files together. Open Start Mac Host.command.
 
@@ -24,7 +24,10 @@ Video defaults to Smooth (up to 60 FPS). Some browsers require reduced
 resolution for 60 FPS; select Sharper for up to 720p at 30 FPS on those browsers.
 Optional 720p / 60 FPS and 1080p / 60 FPS choices are in the Video menu.
 They require the updated host and a supported browser; Smooth stays default.
-For game camera movement, update/refresh the viewer and click Game mouse.
+For game camera movement, update/refresh the viewer and press backtick (`),
+the key below Esc, with the remote screen focused. It toggles Game mouse
+without releasing walking keys. The toolbar button also works.
+Both the viewer and Mac host must be 0.2.6 or newer for this behavior.
 Esc releases the pointer. Use the game's first-person/Shift Lock or right-drag
 camera controls as usual. Game mouse does not change the game's camera rules.
 Connection details shows measured FPS and encoding/decoding/buffering time.

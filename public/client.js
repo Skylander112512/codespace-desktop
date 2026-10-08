@@ -6,6 +6,7 @@ let reconnectTimer, reconnectDelay=2000, sessionKey=null, keepTrying=false, auth
 let lastVideoAt=0, previousStats, polling=false, nativeStats={};
 let inputSequence=0, lastReliable=0, pendingMotion=null, motionTimer;
 let relativeMouseAvailable=false;
+let preserveKeysOnUnlock=false, requestingGameMouse=false;
 const events=[];
 function detail(text){
   events.push(`${new Date().toLocaleTimeString()} · ${text}`);
@@ -44,6 +45,7 @@ function control(msg){
   signal(msg);
 }
 function release(){
+  preserveKeysOnUnlock=false;
   if(document.pointerLockElement===$('screen'))document.exitPointerLock?.();
   held.clear();control({type:'input',action:'release'});
 }
@@ -235,24 +237,33 @@ function position(e){
 }
 const screen=$('screen');
 const gameMouseLocked=()=>document.pointerLockElement===screen;
-$('game-mouse').onclick=async()=>{
-  if(gameMouseLocked()){release();return;}
+async function toggleGameMouse(){
+  if(gameMouseLocked()){preserveKeysOnUnlock=true;document.exitPointerLock();return;}
+  if(requestingGameMouse)return;
   if(!relativeMouseAvailable){status('Update the Mac host to use Game mouse.');return;}
   if(!screen.requestPointerLock){status('Game mouse is unavailable in this browser.');return;}
+  requestingGameMouse=true;
   try{
     try{await screen.requestPointerLock({unadjustedMovement:true});}
     catch(error){if(error.name==='NotSupportedError')await screen.requestPointerLock();else throw error;}
-  }catch{status('Mouse lock was blocked. Click Game mouse again in a full browser tab.');}
-};
+  }catch{status('Mouse lock was blocked. Press ` or click Game mouse again in a full browser tab.');}
+  finally{requestingGameMouse=false;}
+}
+$('game-mouse').onclick=toggleGameMouse;
+// Keep keyboard focus on the remote screen when using the toolbar with a mouse.
+$('game-mouse').onpointerdown=e=>e.preventDefault();
 document.addEventListener('pointerlockchange',()=>{
   const locked=gameMouseLocked();
-  if(locked && (!relativeMouseAvailable || ws?.readyState!==WebSocket.OPEN)){
+  if(locked && (!relativeMouseAvailable || ws?.readyState!==WebSocket.OPEN || document.hidden || document.hasFocus?.()===false)){
     document.exitPointerLock?.();return;
   }
-  held.clear();control({type:'input',action:'release'});
-  if(locked){screen.focus();control({type:'input',action:'pointer-lock',enabled:true});}
-  $('game-mouse').textContent=locked?'Game mouse · Esc to exit':'Game mouse';
-  status(locked?'Game mouse on · move to turn · Esc releases mouse':'Game mouse off · normal pointer restored');
+  if(locked || preserveKeysOnUnlock){
+    control({type:'input',action:'pointer-lock',enabled:locked,preserveKeys:true});
+    if(locked)screen.focus();
+  }else{held.clear();control({type:'input',action:'release'});}
+  preserveKeysOnUnlock=false;
+  $('game-mouse').textContent=locked?'Game mouse on · ` to toggle':'Game mouse · `';
+  status(locked?'Game mouse on · move to turn · ` toggles · Esc releases mouse':'Game mouse off · press ` to turn it on');
 });
 function flushMotion(){
   motionTimer=null;const latest=pendingMotion;pendingMotion=null;
@@ -278,7 +289,7 @@ screen.onpointermove=e=>{
 };
 screen.addEventListener('wheel',e=>{e.preventDefault();control({type:'input',action:'scroll',dy:e.deltaY*(e.deltaMode===1?16:1),dx:e.deltaX*(e.deltaMode===1?16:1)});},{passive:false});
 const mapped=code=>$('map-ctrl').checked&&code.startsWith('Control')?code.replace('Control','Meta'):code;
-screen.onkeydown=e=>{if(e.code==='Escape'&&gameMouseLocked()){release();return;}if(e.code==='Escape'&&document.fullscreenElement)return;e.preventDefault();const code=mapped(e.code);held.add(code);control({type:'input',action:'key',code,down:true});};
-screen.onkeyup=e=>{e.preventDefault();const code=mapped(e.code);held.delete(code);control({type:'input',action:'key',code,down:false});};
+screen.onkeydown=e=>{if(e.code==='Backquote'&&relativeMouseAvailable){e.preventDefault();if(!e.repeat)return toggleGameMouse();return;}if(e.code==='Escape'&&gameMouseLocked()){release();return;}if(e.code==='Escape'&&document.fullscreenElement)return;e.preventDefault();const code=mapped(e.code);held.add(code);control({type:'input',action:'key',code,down:true});};
+screen.onkeyup=e=>{e.preventDefault();if(e.code==='Backquote'&&relativeMouseAvailable)return;const code=mapped(e.code);held.delete(code);control({type:'input',action:'key',code,down:false});};
 screen.onblur=release;window.addEventListener('blur',release);
 document.addEventListener('visibilitychange',()=>{if(document.hidden)release();});

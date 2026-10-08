@@ -126,7 +126,7 @@ test('locked clicks stay relative and unlock releases held input and queued turn
   b.documentHandlers.mousemove({movementX:12,movementY:0});
   b.context.document.pointerLockElement=null;b.documentHandlers.pointerlockchange();
   assert.equal(ws.sent.at(-1).action,'release');assert.equal(b.run('pendingMotion'),null);
-  assert.equal(b.get('game-mouse').textContent,'Game mouse');
+  assert.equal(b.get('game-mouse').textContent,'Game mouse · `');
   b.run('flushMotion()');assert.equal(ws.sent.at(-1).action,'release');
 });
 
@@ -141,4 +141,39 @@ test('late pointer lock after disconnect immediately releases the browser mouse'
   const b=browser();b.submit();b.run('cleanup()');
   b.context.document.pointerLockElement=b.get('screen');b.documentHandlers.pointerlockchange();
   assert.equal(b.context.document.pointerLockElement,null);
+});
+
+test('backtick toggles game mouse both ways without interrupting held walking keys',async()=>{
+  const b=browser(),ws=b.submit(),screen=b.get('screen');b.run('relativeMouseAvailable=true');
+  let locks=0;
+  screen.requestPointerLock=async()=>{locks++;b.context.document.pointerLockElement=screen;b.documentHandlers.pointerlockchange();};
+  screen.onkeydown({code:'KeyW',preventDefault(){}});
+  await screen.onkeydown({code:'Backquote',repeat:false,preventDefault(){}});
+  screen.onkeydown({code:'Backquote',repeat:true,preventDefault(){}});
+  screen.onkeyup({code:'Backquote',preventDefault(){}});
+  assert.equal(locks,1);assert.equal(b.run("held.has('KeyW')"),true);
+  assert.equal(ws.sent.at(-1).action,'pointer-lock');assert.equal(ws.sent.at(-1).preserveKeys,true);
+  await screen.onkeydown({code:'Backquote',preventDefault(){}});b.documentHandlers.pointerlockchange();
+  assert.equal(ws.sent.at(-1).enabled,false);assert.equal(ws.sent.at(-1).preserveKeys,true);
+  assert.equal(b.run("held.has('KeyW')"),true);
+  assert.equal(ws.sent.some(m=>m.action==='release'||m.code==='Backquote'||m.down===false),false);
+  screen.onkeyup({code:'KeyW',preventDefault(){}});
+  assert.equal(ws.sent.at(-1).code,'KeyW');assert.equal(ws.sent.at(-1).down,false);
+});
+
+test('failed game mouse request preserves walking; actual blur releases everything',async()=>{
+  const b=browser(),ws=b.submit(),screen=b.get('screen');b.run('relativeMouseAvailable=true');
+  screen.requestPointerLock=async()=>{throw new Error('denied');};
+  screen.onkeydown({code:'KeyW',preventDefault(){}});
+  await screen.onkeydown({code:'Backquote',preventDefault(){}});
+  assert.equal(b.run("held.has('KeyW')"),true);assert.equal(ws.sent.length,1);
+  screen.onblur();assert.equal(b.run('held.size'),0);assert.equal(ws.sent.at(-1).action,'release');
+});
+
+test('a late mouse lock cannot refocus the game after switching away',()=>{
+  const b=browser(),ws=b.submit();b.run('relativeMouseAvailable=true');
+  b.context.document.hasFocus=()=>false;
+  b.context.document.pointerLockElement=b.get('screen');b.documentHandlers.pointerlockchange();
+  assert.equal(b.context.document.pointerLockElement,null);
+  assert.equal(ws.sent.some(m=>m.action==='pointer-lock'),false);
 });

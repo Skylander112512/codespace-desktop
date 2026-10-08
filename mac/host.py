@@ -25,7 +25,7 @@ from websockets.asyncio.client import connect
 import certifi
 from websockets.exceptions import ConnectionClosed, InvalidStatus
 
-VERSION = '0.2.5'
+VERSION = '0.2.6'
 
 
 class DirectConnect(connect):
@@ -166,7 +166,10 @@ class MacInput:
         self.last_input=time.monotonic()
         if action=='release': self.release()
         elif action=='pointer-lock' and isinstance(msg.get('enabled'),bool):
-            self.release();self.set_relative_mouse(msg['enabled'])
+            if msg.get('preserveKeys') is True:
+                for button in list(self.buttons):self.mouse('up',button)
+            else:self.release()
+            self.set_relative_mouse(msg['enabled'])
         elif action=='look':self.look(msg.get('dx'),msg.get('dy'))
         elif action=='key' and isinstance(msg.get('down'),bool): self.keyboard(msg.get('code'),msg['down'])
         elif action=='tap':

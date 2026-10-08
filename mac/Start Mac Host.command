@@ -9,7 +9,7 @@ TRAPEXIT() {
   fi
   if [[ -t 0 ]]; then read '?Press Enter to close.'; fi
 }
-print 'Starting Codespace Desktop 0.2.5. The first launch can take a moment…'
+print 'Starting Codespace Desktop 0.2.6. The first launch can take a moment…'
 if [[ -x "./Codespace Desktop Host" ]]; then
   "./Codespace Desktop Host" "$@"
 else

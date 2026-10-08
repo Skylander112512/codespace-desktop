@@ -77,4 +77,21 @@ class MouseEvents(unittest.TestCase):
         self.controls.look(5,0)
         self.assertEqual(q.CGEventGetIntegerValueField(self.posted[-1],q.kCGMouseEventDeltaX),5)
 
+    def test_game_mouse_toggle_preserves_walking_until_keyup_or_safety_release(self):
+        self.controls.keyboard('KeyW',True)
+        self.controls.mouse('down',2)
+        for enabled in (True,False):
+            self.controls.handle({'action':'pointer-lock','enabled':enabled,'preserveKeys':True})
+            self.assertEqual(self.controls.keys,{'KeyW'})
+            self.assertFalse(self.controls.buttons)
+            self.assertEqual(self.controls.relative_mouse,enabled)
+        self.assertFalse(any(q.CGEventGetType(e)==q.kCGEventKeyUp for e in self.posted))
+        self.controls.handle({'action':'key','code':'KeyW','down':False})
+        self.assertFalse(self.controls.keys)
+        self.controls.keyboard('KeyW',True)
+        self.controls.handle({'action':'pointer-lock','enabled':True,'preserveKeys':True})
+        self.controls.handle({'action':'release'})
+        self.assertFalse(self.controls.keys)
+        self.assertFalse(self.controls.relative_mouse)
+
 if __name__=='__main__':unittest.main()
