@@ -8,7 +8,7 @@ function browser(){
   const nodes=new Map();const documentHandlers={};
   const get=id=>{
     if(!nodes.has(id))nodes.set(id,{hidden:['desktop','connection-error'].includes(id),value:'',textContent:'',handlers:{},
-      addEventListener(type,fn){this.handlers[type]=fn;},removeAttribute(){},focus(){},hasPointerCapture(){return false;},checked:false});
+      addEventListener(type,fn){this.handlers[type]=fn;},removeAttribute(){},setAttribute(){},focus(){},select(){this.selected=true;},hasPointerCapture(){return false;},checked:false});
     return nodes.get(id);
   };
   class Socket {
@@ -18,7 +18,7 @@ function browser(){
     close(code,reason){this.readyState=3;this.onclose({code,reason});}
   }
   const context={receiveQuality,document:{getElementById:get,body:{classList:{add(){},remove(){}}},addEventListener(name,fn){documentHandlers[name]=fn;},exitPointerLock(){this.pointerLockElement=null;}},
-    window:{addEventListener(){}},location:{protocol:'https:',host:'example.test'},WebSocket:Socket,
+    window:{addEventListener(){}},location:{protocol:'https:',host:'example.test'},WebSocket:Socket,TextEncoder,navigator:{},
     performance:{now:()=>100},setInterval:()=>1,clearInterval(){},setTimeout:()=>1,clearTimeout(){}};
   vm.createContext(context);
   vm.runInContext(readFileSync(new URL('../public/client.js',import.meta.url),'utf8').replace(/^import .*;\n/,''),context);
@@ -176,4 +176,37 @@ test('a late mouse lock cannot refocus the game after switching away',()=>{
   b.context.document.pointerLockElement=b.get('screen');b.documentHandlers.pointerlockchange();
   assert.equal(b.context.document.pointerLockElement,null);
   assert.equal(ws.sent.some(m=>m.action==='pointer-lock'),false);
+});
+
+test('text transfer waits for explicit requests and matches responses without logging text',()=>{
+  const b=browser(),ws=b.submit();b.run("receive({type:'status',text:'Ready',textTransfer:true})");
+  assert.equal(ws.sent.length,0);
+  b.get('transfer-text').value='Hello\n世界';b.get('send-text').onclick();
+  assert.equal(ws.sent[0].type,'clipboard');assert.equal(ws.sent[0].text,'Hello\n世界');
+  assert.equal(b.get('send-text').disabled,true);
+  b.run("receive({type:'clipboard-result',request:1,ok:true})");
+  assert.equal(b.get('send-text').disabled,false);
+  b.get('get-text').onclick();assert.equal(ws.sent[1].action,'read');assert.equal('text' in ws.sent[1],false);
+  b.run("receive({type:'clipboard-result',request:1,ok:true,text:'stale'})");
+  assert.equal(b.get('transfer-text').value,'Hello\n世界');
+  b.run("receive({type:'clipboard-result',request:2,ok:true,text:'From Mac'})");
+  assert.equal(b.get('transfer-text').value,'From Mac');
+  assert.equal(b.get('details-log').textContent.includes('From Mac'),false);
+});
+
+test('text transfer rejects oversized UTF-8 and disables requests after disconnect',()=>{
+  const b=browser(),ws=b.submit();b.run("receive({type:'status',text:'Ready',textTransfer:true})");
+  b.get('transfer-text').value='😀'.repeat(5000);b.get('send-text').onclick();assert.equal(ws.sent.length,0);
+  b.get('get-text').onclick();b.run('cleanup()');
+  b.run("receive({type:'clipboard-result',request:1,ok:true,text:'stale'})");
+  assert.notEqual(b.get('transfer-text').value,'stale');assert.equal(b.get('get-text').disabled,true);
+});
+
+test('copy text uses the browser clipboard or selects text for manual copy',async()=>{
+  const b=browser();let copied;
+  b.context.navigator.clipboard={writeText:async text=>{copied=text;}};
+  b.get('transfer-text').value='Copy me';await b.get('copy-text').onclick();assert.equal(copied,'Copy me');
+  b.context.navigator.clipboard.writeText=async()=>{throw new Error('Permission denied');};
+  await b.get('copy-text').onclick();assert.equal(b.get('transfer-text').selected,true);
+  assert.match(b.get('transfer-status').textContent,/Ctrl\+C/);
 });

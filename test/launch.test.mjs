@@ -32,7 +32,7 @@ test('cloak embeds only the viewer origin and redirects after the viewer loads',
   assert.equal(f.opens.length,1);assert.deepEqual(f.opens[0],['about:blank','_blank']);
   const frame=f.shell.body.children[0];
   assert.equal(frame.src,'https://viewer.example/');assert.equal(frame.allowFullscreen,true);
-  assert.equal(frame.allow,'fullscreen; autoplay');assert.equal(f.shell.title,'Google Classroom');
+  assert.equal(frame.allow,'fullscreen; autoplay; clipboard-write');assert.equal(f.shell.title,'Google Classroom');
   assert.deepEqual(f.redirects,[]);
   frame.contentDocument={getElementById:id=>id==='connect-form'?{}:null};frame.handlers.load();
   assert.equal(f.popup.opener,null);assert.deepEqual(f.redirects,['https://classroom.google.com/']);

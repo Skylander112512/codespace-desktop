@@ -53,6 +53,20 @@ test('cross-origin socket rejected',async t=>{
   const [error]=await once(ws,'error');assert.match(error.message,/403/);
 });
 
+test('clipboard requests and replies flow only in their allowed authenticated direction',async t=>{
+  const {client}=await fixture(t);
+  const host=await client('host'),viewer=await client('viewer');
+  await until(()=>host.messages.some(m=>m.type==='viewer-ready'));
+  viewer.ws.send(JSON.stringify({type:'clipboard',action:'write',request:1,text:'Hello'}));
+  await until(()=>host.messages.some(m=>m.type==='clipboard' && m.text==='Hello'));
+  host.ws.send(JSON.stringify({type:'clipboard-result',request:1,ok:true}));
+  await until(()=>viewer.messages.some(m=>m.type==='clipboard-result'));
+  viewer.ws.send(JSON.stringify({type:'clipboard-result',request:99,ok:true}));
+  viewer.ws.send(JSON.stringify({type:'ping',at:99}));
+  await until(()=>host.messages.some(m=>m.type==='ping' && m.at===99));
+  assert.equal(host.messages.some(m=>m.type==='clipboard-result'),false);
+});
+
 test('a queued JPEG does not close the viewer when a pong follows it', async t=>{
   const {client}=await fixture(t);
   const host=await client('host');const viewer=await client('viewer');
@@ -70,7 +84,7 @@ test('a queued JPEG does not close the viewer when a pong follows it', async t=>
 
 test('health endpoint identifies the deployed version without exposing credentials',async t=>{
   const {base}=await fixture(t);
-  assert.deepEqual(await (await fetch(base+'/health')).json(),{app:'codespace-desktop',version:'0.2.7'});
+  assert.deepEqual(await (await fetch(base+'/health')).json(),{app:'codespace-desktop',version:'0.2.8'});
 });
 
 
@@ -78,18 +92,26 @@ test('Codespaces rewritten origin works only through the expected local tunnel',
   const origin='https://example-3000.app.github.dev';
   const {base}=await fixture(t,{publicOrigin:origin,codespacesPort:3000});
   const headers={Host:'localhost:3000','X-Forwarded-Host':'example-3000.app.github.dev'};
-  const ws=new WebSocket(base.replace('http','ws')+'/ws',{origin:'http://localhost:3000',headers});
-  await once(ws,'open');
-  const received=once(ws,'message');
-  ws.send(JSON.stringify({type:'auth',role:'viewer',key:'v'.repeat(43)}));
-  assert.equal(JSON.parse((await received)[0]).type,'authenticated');
-  ws.close();
+  for(const protocol of ['http','https']){
+    const ws=new WebSocket(base.replace('http','ws')+'/ws',{origin:`${protocol}://localhost:3000`,headers});
+    await once(ws,'open');
+    const received=once(ws,'message');
+    ws.send(JSON.stringify({type:'auth',role:'viewer',key:'v'.repeat(43)}));
+    assert.equal(JSON.parse((await received)[0]).type,'authenticated');
+    ws.close();await once(ws,'close');
+  }
   for (const settings of [
     {origin:'https://evil.example',headers},
     {origin:'http://localhost:3001',headers},
     {origin:'http://localhost:3000',headers:{...headers,'X-Forwarded-Host':'evil.example'}},
     {origin:'http://localhost:3000',headers:{Host:'localhost:3000'}},
     {origin:'http://example-3000.app.github.dev',headers},
+    {origin:'https://localhost:3001',headers},
+    {origin:'https://localhost:3000',headers:{...headers,'X-Forwarded-Host':'evil.example'}},
+    {origin:'https://localhost:3000',headers:{Host:'localhost:3000'}},
+    {origin:'https://localhost:3000',headers:{...headers,Host:'localhost:3001'}},
+    {origin:'ftp://localhost:3000',headers},
+    {origin:'[https://localhost:3000](https://localhost:3000)',headers},
   ]) {
     const bad=new WebSocket(base.replace('http','ws')+'/ws',settings);
     const [error]=await once(bad,'error');assert.match(error.message,/403/);
@@ -98,6 +120,8 @@ test('Codespaces rewritten origin works only through the expected local tunnel',
 
 test('localhost rewrite is rejected when Codespaces proxy support is not configured',async t=>{
   const {base}=await fixture(t,{publicOrigin:'https://example-3000.app.github.dev'});
-  const ws=new WebSocket(base.replace('http','ws')+'/ws',{origin:'http://localhost:3000',headers:{Host:'localhost:3000','X-Forwarded-Host':'example-3000.app.github.dev'}});
-  const [error]=await once(ws,'error');assert.match(error.message,/403/);
+  for(const protocol of ['http','https']){
+    const ws=new WebSocket(base.replace('http','ws')+'/ws',{origin:`${protocol}://localhost:3000`,headers:{Host:'localhost:3000','X-Forwarded-Host':'example-3000.app.github.dev'}});
+    const [error]=await once(ws,'error');assert.match(error.message,/403/);
+  }
 });

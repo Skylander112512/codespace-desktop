@@ -5,3 +5,5 @@
 #quality{font:inherit;color:inherit;background:#152638;border:1px solid #355069;border-radius:6px;padding:5px}
 
 .tab-choice h2{font-size:22px;font-weight:550;margin:0 0 10px}.tab-choice>p{margin-top:10px}.tab-choice .quiet{padding:13px 21px;font-size:13px}#tab-error{color:#ffc0bc}
+
+.transfer-panel{padding:18px;background:#141d2b;border-top:1px solid #2b374c}.transfer-panel textarea{display:block;width:100%;resize:vertical;background:#0b1019;color:#edf0f5;border:1px solid #39465d;border-radius:7px;padding:12px;font:14px ui-monospace,monospace;margin-bottom:12px}.transfer-panel .join{flex-wrap:wrap}#transfer-status{font-size:12px;margin-bottom:0}

@@ -7,6 +7,7 @@ let lastVideoAt=0, previousStats, polling=false, nativeStats={};
 let inputSequence=0, lastReliable=0, pendingMotion=null, motionTimer;
 let relativeMouseAvailable=false;
 let preserveKeysOnUnlock=false, requestingGameMouse=false;
+let textTransferReady=false, transferNumber=0, pendingTransfer=null;
 const events=[];
 function detail(text){
   events.push(`${new Date().toLocaleTimeString()} · ${text}`);
@@ -21,6 +22,27 @@ function connectionError(text){
 const held=new Set();
 const status=text=>{$('status').textContent=text;};
 const signal=msg=>{if(ws?.readyState===WebSocket.OPEN)ws.send(JSON.stringify(msg));};
+function transferButtons(){
+  $('send-text').disabled=$('get-text').disabled=!textTransferReady || Boolean(pendingTransfer);
+}
+function resetTransfer(){
+  clearTimeout(pendingTransfer?.timer);pendingTransfer=null;textTransferReady=false;transferButtons();
+  $('transfer-status').textContent='Connect Mac host 0.2.8 or newer to transfer text.';
+}
+function transferText(action){
+  if(!textTransferReady || pendingTransfer || ws?.readyState!==WebSocket.OPEN)return;
+  const text=$('transfer-text').value;
+  if(action==='write' && new TextEncoder().encode(text).length>16384){
+    $('transfer-status').textContent='Text is too long. Send up to 16 KB at a time.';return;
+  }
+  const request=++transferNumber;
+  pendingTransfer={request,action,timer:setTimeout(()=>{
+    if(pendingTransfer?.request!==request)return;
+    pendingTransfer=null;transferButtons();$('transfer-status').textContent='No response from the Mac. Check its connection and try again.';
+  },8000)};
+  transferButtons();$('transfer-status').textContent=action==='write'?'Sending to Mac…':'Getting Mac clipboard…';
+  signal({type:'clipboard',action,request,...(action==='write'?{text}:{})});
+}
 function control(msg){
   if(msg.type==='input'){
     msg={...msg,seq:++inputSequence};
@@ -126,6 +148,16 @@ async function offer(msg){
   }catch(error){if(generation===current){detail(`Direct connection unavailable (${error.name}); using relay.`);status('Direct connection unavailable. Using compatibility relay.');}}
 }
 function receive(msg){
+  if(msg.type==='clipboard-result' && pendingTransfer?.request===msg.request){
+    const action=pendingTransfer.action;clearTimeout(pendingTransfer.timer);pendingTransfer=null;transferButtons();
+    if(msg.ok!==true){$('transfer-status').textContent=msg.error||'Text transfer failed. Try again.';return;}
+    if(action==='read'){
+      if(typeof msg.text!=='string' || new TextEncoder().encode(msg.text).length>16384){$('transfer-status').textContent='Mac returned invalid or oversized text.';return;}
+      $('transfer-text').value=msg.text;
+      $('transfer-status').textContent=msg.text?'Mac text received. Click Copy text to use it here.':'The Mac clipboard contains no text.';
+    }else $('transfer-status').textContent='Copied to the Mac clipboard. Paste on the Mac with ⌘V.';
+    return;
+  }
   if(msg.type==='authenticated'){
     clearTimeout(connectTimer);authenticatedAt=performance.now();$('key').value='';
     $('intro').hidden=true;$('login').hidden=true;$('notes').hidden=true;$('desktop').hidden=false;
@@ -141,10 +173,12 @@ function receive(msg){
   if(msg.type==='performance')nativeStats=msg;
   if(msg.type==='status'){
     if(msg.relativeMouse===true){relativeMouseAvailable=true;$('game-mouse').disabled=false;}
+    if(msg.textTransfer===true){textTransferReady=true;transferButtons();$('transfer-status').textContent='Ready. Text transfers only when you click Send or Get.';}
     status(msg.text);detail(msg.text);
   }
   if(msg.type==='pong')$('latency').textContent=`${Math.max(0,Math.round(performance.now()-msg.at))} ms control round trip`;
   if(msg.type==='peer-left'){
+    resetTransfer();
     relativeMouseAvailable=false;$('game-mouse').disabled=true;
     detail('Mac disconnected; the viewer remains connected to Codespaces.');
     release();closeRTC();generation++;gotFrame=false;
@@ -209,6 +243,7 @@ function connectWithKey(key){
 }
 
 function cleanup(reconnecting=false){
+  resetTransfer();
   relativeMouseAvailable=false;$('game-mouse').disabled=true;
   generation++;pendingMotion=null;clearTimeout(motionTimer);motionTimer=null;clearInterval(statsTimer);clearTimeout(connectTimer);$('connect-button').disabled=false;closeRTC();ws=null;held.clear();gotFrame=false;
   if(frameURL){URL.revokeObjectURL(frameURL);frameURL=null;}
@@ -225,6 +260,17 @@ $('fullscreen').onclick=()=>{$('screen').requestFullscreen().catch(()=>status('F
 $('escape').onclick=()=>control({type:'input',action:'tap',code:'Escape'});
 $('cmd-tab').onclick=()=>control({type:'input',action:'shortcut',code:'Tab'});
 $('map-ctrl').onchange=release;
+$('text-transfer').onclick=()=>{
+  const panel=$('transfer-panel');panel.hidden=!panel.hidden;
+  $('text-transfer').setAttribute('aria-expanded',String(!panel.hidden));
+  if(!panel.hidden){release();$('transfer-text').focus();}
+};
+$('send-text').onclick=()=>transferText('write');
+$('get-text').onclick=()=>transferText('read');
+$('copy-text').onclick=async()=>{
+  try{await navigator.clipboard.writeText($('transfer-text').value);$('transfer-status').textContent='Copied on this computer.';}
+  catch{$('transfer-text').focus();$('transfer-text').select();$('transfer-status').textContent='Press Ctrl+C (⌘C on Mac) to copy the selected text.';}
+};
 function position(e){
   const rect=$('screen').getBoundingClientRect();
   const media=useRTC?$('video'):$('frame');

@@ -26,7 +26,7 @@ export function createDesktopServer({hostKey, viewerKey, viewerCode, iceServers 
     const asset = assets.get(req.url);
     if (req.method === 'GET' && req.url === '/health') {
       res.writeHead(200, {...headers, 'Content-Type':'application/json'});
-      res.end(JSON.stringify({app:'codespace-desktop',version:'0.2.7'})); return;
+      res.end(JSON.stringify({app:'codespace-desktop',version:'0.2.8'})); return;
     }
     if (req.method !== 'GET' || !asset) { res.writeHead(404, headers); res.end('Not found'); return; }
     res.writeHead(200, {...headers, 'Content-Type':asset[1]});
@@ -42,13 +42,14 @@ export function createDesktopServer({hostKey, viewerKey, viewerCode, iceServers 
         const origin = new URL(req.headers.origin);
         const expected = publicOrigin ? new URL(publicOrigin) : null;
         const direct = expected ? origin.origin === expected.origin : origin.host === req.headers.host;
-        // Codespaces rewrites both Host and Origin to http://localhost:<port>.
+        // Codespaces can rewrite Origin to either http or https localhost.
         // Only trust that rewrite from the local tunnel, for this exact port,
         // with the configured public hostname in X-Forwarded-Host.
         const loopback = ['127.0.0.1','::1','::ffff:127.0.0.1'].includes(req.socket.remoteAddress);
         const localHost = `localhost:${codespacesPort}`;
         const tunnel = Number.isInteger(codespacesPort) && expected && loopback &&
-          req.headers.host === localHost && origin.origin === `http://${localHost}` &&
+          req.headers.host === localHost &&
+          (origin.origin === `http://${localHost}` || origin.origin === `https://${localHost}`) &&
           req.headers['x-forwarded-host'] === expected.host;
         valid &&= direct || tunnel;
       } catch { valid = false; }
@@ -96,14 +97,14 @@ export function createDesktopServer({hostKey, viewerKey, viewerCode, iceServers 
         if (peers[candidate]) { ws.close(4009,`${candidate} already connected`); return; }
         clearTimeout(deadline); role=candidate; peers[role]=ws;
         log(`${role} authenticated`);
-        send(ws,{type:'authenticated',role,iceServers,version:'0.2.7'});
+        send(ws,{type:'authenticated',role,iceServers,version:'0.2.8'});
         if (peers.host && peers.viewer) {
           send(peers.viewer,{type:'host-ready'});
           send(peers.host,{type:'viewer-ready'});
         } else send(ws,{type:'waiting'});
         return;
       }
-      const allow=role==='host'?['offer','status','pong','performance']:['answer','input','frame-ack','ping','mode','feedback','quality'];
+      const allow=role==='host'?['offer','status','pong','performance','clipboard-result']:['answer','input','frame-ack','ping','mode','feedback','quality','clipboard'];
       if (!allow.includes(msg.type)) return;
       const other=peers[role==='host'?'viewer':'host'];
       // A single valid JPEG can exceed 256 KiB. Do not disconnect the viewer

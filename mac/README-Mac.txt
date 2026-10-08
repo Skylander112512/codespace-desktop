@@ -1,4 +1,4 @@
-Codespace Desktop 0.2.6 — Apple Silicon Mac / macOS 14+
+Codespace Desktop 0.2.8 — Apple Silicon Mac / macOS 14+
 
 Keep these files together. Open Start Mac Host.command.
 
@@ -36,3 +36,9 @@ is retained when peer video cannot connect.
 
 Source and instructions:
 https://github.com/Skylander112512/codespace-desktop
+
+Text transfer (viewer and host 0.2.8+):
+Open Text transfer in the viewer. Send to Mac replaces the Mac clipboard;
+paste into your Mac app with Cmd+V. Get from Mac reads its clipboard into
+the box, then Copy text copies it on the Chromebook. Plain text only, up to
+16 KB per request. There is no automatic clipboard synchronization.

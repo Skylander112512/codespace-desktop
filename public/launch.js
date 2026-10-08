@@ -48,7 +48,7 @@ export function setupLaunch(win=window, doc=document){
       shell.head.append(css,icon);
       const frame=shell.createElement('iframe');
       frame.id='desktop-viewer';frame.title='Remote desktop viewer';
-      frame.allow='fullscreen; autoplay';frame.allowFullscreen=true;
+      frame.allow='fullscreen; autoplay; clipboard-write';frame.allowFullscreen=true;
       frame.referrerPolicy='no-referrer';
       // No connection code, token, query string or fragment is copied to the new tab.
       frame.src=origin+'/';

@@ -20,12 +20,13 @@ from reconnect import keep_connected, ConnectionProblem
 from adaptive import AdaptiveQuality
 from video_quality import select_quality
 from host_settings import load_settings, save_settings
+from text_clipboard import TextClipboard
 from PIL import Image, ImageDraw
 from websockets.asyncio.client import connect
 import certifi
 from websockets.exceptions import ConnectionClosed, InvalidStatus
 
-VERSION = '0.2.6'
+VERSION = '0.2.8'
 
 
 class DirectConnect(connect):
@@ -262,6 +263,7 @@ class ScreenTrack(VideoStreamTrack):
 class Host:
     def __init__(self,demo=False,native=None):
         self.capture=Capture(demo); self.controls=MacInput(demo)
+        self.clipboard=TextClipboard(demo)
         self.prefer_native=(not demo) if native is None else native
         self.native=None; self.quality=AdaptiveQuality(); self.on_authenticated=None
         self.pc=None; self.channel=None; self.motion=None; self.ws=None; self.active=False; self.rtc=False
@@ -270,6 +272,18 @@ class Host:
 
     async def send(self,msg):
         if self.ws: await self.ws.send(json.dumps(msg))
+
+    async def transfer_text(self,msg):
+        request=msg.get('request')
+        if not self.active or type(request) is not int or not 0<request<=2**53-1:return
+        response={'type':'clipboard-result','request':request}
+        try:
+            text=await asyncio.to_thread(self.clipboard.transfer,msg.get('action'),msg.get('text'))
+            response['ok']=True
+            if text is not None:response['text']=text
+        except ValueError as error:response.update(ok=False,error=str(error))
+        except Exception:response.update(ok=False,error='Mac clipboard unavailable. Try again.')
+        await self.send(response)
 
     async def end_session(self):
         self.active=False; self.rtc=False
@@ -285,7 +299,7 @@ class Host:
     async def start_session(self):
         await self.end_session(); self.active=True
         print('Viewer connected. Close this window or press Ctrl+C to stop access.',flush=True)
-        await self.send({'type':'status','text':f'Mac host {VERSION} connected. Starting screen capture…','relativeMouse':True})
+        await self.send({'type':'status','text':f'Mac host {VERSION} connected. Starting screen capture…','relativeMouse':True,'textTransfer':True})
         self.quality=AdaptiveQuality()
         self.tasks={asyncio.create_task(self.relay()),asyncio.create_task(self.negotiate()),asyncio.create_task(self.telemetry())}
 
@@ -455,6 +469,7 @@ class Host:
                         except Exception:await self.send({'type':'status','text':'Using compatibility relay.'})
                     elif kind=='input' and self.active:
                         with contextlib.suppress(ValueError,TypeError,KeyError):self.controls.handle(msg)
+                    elif kind=='clipboard' and self.active:await self.transfer_text(msg)
                     elif kind=='quality' and self.active:await self.start_session()
                     elif kind=='feedback' and self.active:self.feedback(msg)
                     elif kind=='frame-ack':self.ack.set()
