@@ -1,10 +1,14 @@
-Codespace Desktop 0.2.3 — Apple Silicon Mac / macOS 14+
+Codespace Desktop 0.2.4 — Apple Silicon Mac / macOS 14+
 
 Keep these files together. Open Start Mac Host.command.
 
 First launch only: enter the Codespaces viewer URL and the Mac host key from
 npm start. After a successful connection, the Mac remembers both privately.
-Future launches connect automatically. Leave the window open while using it.
+Future launches connect automatically. Leave the window open before leaving.
+If Codespaces is off, this host waits and retries (up to once per minute).
+Later, start the same Codespace and npm start; keep port 3000 Public.
+The Mac connects on its next retry. It cannot start Codespaces for you.
+No screen video is captured while waiting for a viewer. Ctrl+C stops retries.
 Open Change Connection.command if your Codespace address or host key changes.
 
 On the Chromebook, open the Codespaces viewer and enter your chosen code.

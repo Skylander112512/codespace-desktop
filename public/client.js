@@ -2,6 +2,7 @@ import {receiveQuality} from './video-quality.js';
 const $ = id => document.getElementById(id);
 let ws, pc, channel, motionChannel, frameURL, generation=0, gotFrame=false;
 let useRTC=false, statsTimer, connectTimer;
+let reconnectTimer, reconnectDelay=2000, sessionKey=null, keepTrying=false, authenticatedAt=0;
 let lastVideoAt=0, previousStats, polling=false, nativeStats={};
 let inputSequence=0, lastReliable=0, pendingMotion=null, motionTimer;
 const events=[];
@@ -119,7 +120,7 @@ async function offer(msg){
 }
 function receive(msg){
   if(msg.type==='authenticated'){
-    clearTimeout(connectTimer);$('key').value='';
+    clearTimeout(connectTimer);authenticatedAt=performance.now();$('key').value='';
     $('intro').hidden=true;$('login').hidden=true;$('notes').hidden=true;$('desktop').hidden=false;
     document.body.classList.add('connected');
     status('Waiting for your Mac…');$('connection').textContent='Connected to Codespaces';
@@ -137,7 +138,7 @@ function receive(msg){
     detail('Mac disconnected; the viewer remains connected to Codespaces.');
     release();closeRTC();generation++;gotFrame=false;
     $('frame').hidden=true;$('placeholder').hidden=false;$('mode-label').textContent='Mac offline';
-    $('latency').textContent='';status('Mac disconnected. Reopen the Mac host to reconnect.');
+    $('latency').textContent='';status('Mac offline. Waiting for the host to reconnect…');
   }
 }
 $('video').addEventListener('loadeddata',()=>{lastVideoAt=performance.now();chooseMode();});
@@ -146,13 +147,18 @@ $('relay').addEventListener('change',()=>{release();chooseMode();});
 $('connect-form').addEventListener('submit',event=>{
   event.preventDefault();if(ws)return;
   const key=$('key').value.trim();if(!key)return;
+  clearTimeout(reconnectTimer);sessionKey=key;keepTrying=true;reconnectDelay=2000;
+  connectWithKey(key);
+});
+function connectWithKey(key){
+  if(ws || !keepTrying)return;
   $('connection-error').hidden=true;$('connect-button').disabled=true;
   $('connection').textContent='Connecting…';detail('Opening secure connection to Codespaces…');
   ws=new WebSocket(`${location.protocol==='https:'?'wss':'ws'}://${location.host}/ws`);
   ++generation;
   const socket=ws;
   ws.onopen=()=>{if(socket!==ws)return;detail('Socket open. Checking connection code…');signal({type:'auth',role:'viewer',key});};
-  connectTimer=setTimeout(()=>{if(socket===ws){connectionError('Connection timed out. Check npm start and port 3000 in Codespaces.');socket.close(4000,'Connection timed out');}},12000);
+  connectTimer=setTimeout(()=>{if(socket===ws){detail('Server is taking longer to respond.');socket.close(4000,'Connection timed out');}},12000);
   ws.onmessage=async event=>{
     if(socket!==ws)return;
     if(typeof event.data==='string'){try{receive(JSON.parse(event.data));}catch{detail('Server sent an unreadable message.');}return;}
@@ -171,22 +177,38 @@ $('connect-form').addEventListener('submit',event=>{
   };
   ws.onclose=event=>{
     if(socket!==ws)return;
-    const reason=event.reason||'Network connection lost. Check npm start and that port 3000 is Public.';
-    cleanup();$('connection').textContent='Disconnected';
-    if(event.code===1000)detail('Disconnected.');
-    else connectionError(`Disconnected (${event.code}): ${reason}`);
+    const reason=event.reason||'Network connection lost';
+    const retry=keepTrying && sessionKey && ![4001,4003,4009].includes(event.code);
+    if(authenticatedAt && performance.now()-authenticatedAt>=60000)reconnectDelay=2000;
+    authenticatedAt=0;
+    cleanup(Boolean(retry));
+    if(retry){
+      const wait=reconnectDelay;reconnectDelay=Math.min(60000,reconnectDelay*2);
+      $('connection').textContent='Reconnecting…';
+      status(`Connection lost. Retrying in ${wait/1000} seconds…`);
+      detail(`Connection lost (${event.code}). Retrying in ${wait/1000} seconds.`);
+      reconnectTimer=setTimeout(()=>{reconnectTimer=null;if(keepTrying && sessionKey)connectWithKey(sessionKey);},wait);
+    }else{
+      sessionKey=null;keepTrying=false;$('connection').textContent='Disconnected';
+      if(event.code===1000)detail('Disconnected.');
+      else connectionError(`Disconnected (${event.code}): ${reason}`);
+    }
   };
-  ws.onerror=()=>{if(socket===ws)connectionError('Could not reach the server. Check npm start, port 3000 → Public, and open its HTTPS address in a full browser tab.');};
-});
-function cleanup(){
+  ws.onerror=()=>{if(socket===ws)detail('Server unavailable; waiting for reconnection.');};
+}
+
+function cleanup(reconnecting=false){
   generation++;pendingMotion=null;clearTimeout(motionTimer);motionTimer=null;clearInterval(statsTimer);clearTimeout(connectTimer);$('connect-button').disabled=false;closeRTC();ws=null;held.clear();gotFrame=false;
   if(frameURL){URL.revokeObjectURL(frameURL);frameURL=null;}
   $('frame').removeAttribute('src');$('frame').hidden=true;$('placeholder').hidden=false;
   $('latency').textContent='';$('mode-label').textContent='Waiting for Mac';
-  $('intro').hidden=false;$('login').hidden=false;$('notes').hidden=false;$('desktop').hidden=true;
+  $('intro').hidden=reconnecting;$('login').hidden=reconnecting;$('notes').hidden=reconnecting;$('desktop').hidden=!reconnecting;
   document.body.classList.remove('connected');
 }
-$('disconnect').onclick=()=>{release();ws?.close(1000,'Disconnected');};
+$('disconnect').onclick=()=>{
+  keepTrying=false;sessionKey=null;clearTimeout(reconnectTimer);reconnectTimer=null;
+  release();const socket=ws;cleanup();socket?.close(1000,'Disconnected');$('connection').textContent='Disconnected';
+};
 $('fullscreen').onclick=()=>{$('screen').requestFullscreen().catch(()=>status('Full screen is unavailable in this browser.'));};
 $('escape').onclick=()=>control({type:'input',action:'tap',code:'Escape'});
 $('cmd-tab').onclick=()=>control({type:'input',action:'shortcut',code:'Tab'});

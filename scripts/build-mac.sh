@@ -17,5 +17,5 @@ cp "$project_dir/mac/README-Mac.txt" "$folder/"
 chmod +x "$folder/Codespace Desktop Host" "$folder/ScreenEncoder" "$folder/Start Mac Host.command" "$folder/Change Connection.command"
 codesign --verify --strict "$folder/ScreenEncoder"
 codesign --verify --strict "$folder/Codespace Desktop Host"
-(cd "$output_root" && /usr/bin/zip -q -r 'Codespace-Desktop-Mac-0.2.3.zip' 'Codespace Desktop Mac')
-printf 'Created %s\n' "$output_root/Codespace-Desktop-Mac-0.2.3.zip"
+(cd "$output_root" && /usr/bin/zip -q -r 'Codespace-Desktop-Mac-0.2.4.zip' 'Codespace Desktop Mac')
+printf 'Created %s\n' "$output_root/Codespace-Desktop-Mac-0.2.4.zip"

@@ -16,6 +16,7 @@ from urllib.parse import urlsplit
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCConfiguration, RTCIceServer, VideoStreamTrack
 from av import VideoFrame
 from native_video import NativeVideoTrack, helper_path
+from reconnect import keep_connected, ConnectionProblem
 from adaptive import AdaptiveQuality
 from video_quality import select_quality
 from host_settings import load_settings, save_settings
@@ -24,7 +25,7 @@ from websockets.asyncio.client import connect
 import certifi
 from websockets.exceptions import ConnectionClosed, InvalidStatus
 
-VERSION = '0.2.3'
+VERSION = '0.2.4'
 
 
 class DirectConnect(connect):
@@ -388,7 +389,7 @@ class Host:
                     if kind=='authenticated':
                         if self.on_authenticated:self.on_authenticated()
                         self.ice_servers=msg.get('iceServers',[])
-                        print('Connected to Codespaces. Waiting for your Chromebook.',flush=True)
+                        print('Connected to your server. Waiting for your Chromebook.',flush=True)
                     elif kind=='viewer-ready':await self.start_session()
                     elif kind=='peer-left':
                         await self.end_session();print('Viewer disconnected. Waiting.',flush=True)
@@ -427,13 +428,13 @@ class Host:
         except InvalidStatus as error:
             code=error.response.status_code
             if code in (301,302,303,307,308,401,403):
-                raise RuntimeError(f'Codespaces blocked the Mac connection (HTTP {code}). In Codespaces → Ports, set port 3000 visibility to Public, then restart this host.') from None
-            raise RuntimeError(f'Codespaces returned HTTP {code}. Run npm start and check port 3000.') from None
+                raise ConnectionProblem(f'Codespace is not reachable yet (HTTP {code}). Waiting; when you open it, run npm start and make port 3000 Public.') from None
+            raise ConnectionProblem(f'Server returned HTTP {code}. Waiting for it to become available.',retryable=True) from None
         except ConnectionClosed as error:
             close=error.rcvd or error.sent
             code=close.code if close else 1006
             reason=close.reason if close else 'Network connection lost'
-            raise RuntimeError(f'Connection closed ({code}): {reason}. Check the Codespaces terminal and restart the host.') from None
+            raise ConnectionProblem(f'Connection closed ({code}): {reason}.',retryable=code!=4003) from None
         finally:
             watchdog.cancel()
             with contextlib.suppress(asyncio.CancelledError):await watchdog
@@ -444,7 +445,7 @@ def websocket_url(value):
     parsed=urlsplit(value.strip())
     local=parsed.hostname in ('localhost','127.0.0.1','::1')
     if parsed.scheme not in ('https','http') or not parsed.hostname or parsed.username or parsed.password:
-        raise ValueError('Enter an https:// Codespaces viewer address.')
+        raise ValueError('Enter an https:// viewer address.')
     if parsed.scheme=='http' and not local:raise ValueError('Remote connections require HTTPS.')
     if parsed.path not in ('','/') or parsed.query or parsed.fragment:raise ValueError('Use the viewer address without extra paths or parameters.')
     return ('wss' if parsed.scheme=='https' else 'ws')+'://'+parsed.netloc+'/ws'
@@ -458,7 +459,7 @@ def main():
     parser.add_argument('--native-demo',action='store_true',help='Test hardware encoding with a synthetic screen only')
     args=parser.parse_args()
     if args.native_demo:args.demo=True
-    print(f'\nCodespace Desktop — Mac host {VERSION}\nKeep this window open while connected. Ctrl+C stops access.\n')
+    print(f'\nCodespace Desktop — Mac host {VERSION}\nLeave this window open. It waits for Codespaces and reconnects automatically.\nCtrl+C stops access.\n')
     if not args.demo:
         if sys.platform!='darwin':raise SystemExit('This host requires macOS. Use --demo only for synthetic testing.')
         import Quartz
@@ -479,18 +480,23 @@ def main():
     url=websocket_url(address)
     if len(key)<32:raise SystemExit('Use the full Mac host key printed by npm start, not the Chromebook code.')
     print('\nStarting foreground remote access. No automatic startup is installed.\n',flush=True)
-    agent=Host(args.demo,native=False if args.software else (True if args.native_demo else None))
-    if not args.demo:
-        def remember():
-            try:save_settings(address,key)
-            except OSError:log('Could not save this connection; setup will be needed next launch.')
-        agent.on_authenticated=remember
-    asyncio.run(agent.run(url,key))
+    def make_host():
+        agent=Host(args.demo,native=False if args.software else (True if args.native_demo else None))
+        if not args.demo:
+            def remember():
+                try:save_settings(address,key)
+                except OSError:log('Could not save this connection; setup will be needed next launch.')
+            agent.on_authenticated=remember
+        return agent
+    # Demo CLI remains a single connection for deterministic automated tests.
+    if args.demo:asyncio.run(make_host().run(url,key))
+    else:asyncio.run(keep_connected(make_host,url,key,log=log))
+
 
 
 if __name__=='__main__':
     try:main()
     except KeyboardInterrupt:print('\nAccess stopped.')
     except Exception as error:
-        print(f'\nStopped: {type(error).__name__}: {error}\nCheck the Codespace is running and port 3000 is Public. Restart to reconnect. Use --setup if the address or host key changed.')
+        print(f'\nStopped: {type(error).__name__}: {error}\nCheck the server address and host key. For Codespaces, port 3000 must be Public. Use --setup if your connection details changed.')
         sys.exit(1)

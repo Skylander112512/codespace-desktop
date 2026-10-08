@@ -36,15 +36,17 @@ test('viewer stays on login until authenticated and retains a rejected key',()=>
   assert.equal(b.get('connection-error').hidden,false);
 });
 
-test('successful login clears key; later network failure remains visible',()=>{
+test('successful login clears the field; network failure keeps the session waiting',()=>{
   const b=browser(),ws=b.submit();ws.onopen();
   ws.onmessage({data:JSON.stringify({type:'authenticated',version:'0.1.2'})});
   assert.equal(b.get('login').hidden,true);
   assert.equal(b.get('desktop').hidden,false);
   assert.equal(b.get('key').value,'');
   ws.close(1006,'');
-  assert.equal(b.get('login').hidden,false);
-  assert.match(b.get('connection-error').textContent,/1006/);
+  assert.equal(b.get('login').hidden,true);
+  assert.equal(b.get('desktop').hidden,false);
+  assert.match(b.get('status').textContent,/Retrying in 2 seconds/);
+  assert.equal(b.run('sessionKey'),'viewer-test-key');
   assert.match(b.get('details-log').textContent,/code accepted/);
   assert.ok(!b.get('details-log').textContent.includes('viewer-test-key'));
 });
@@ -72,4 +74,28 @@ test('stalled decoded frames fall back even if video currentTime keeps advancing
   await b.run('sampleStats()');b.run('chooseMode()');
   assert.equal(b.run('useRTC'),false);
   assert.equal(b.get('mode-label').textContent,'Compatibility relay');
+});
+
+
+test('retry reuses only the in-memory code; Disconnect cancels retry and clears it',()=>{
+  const b=browser(), first=b.submit();first.onopen();
+  first.onmessage({data:JSON.stringify({type:'authenticated'})});
+  first.close(1006,'offline');
+  b.run('connectWithKey(sessionKey)');
+  const second=b.Socket.latest;assert.notEqual(first,second);second.onopen();
+  assert.equal(second.sent[0].key,'viewer-test-key');
+  second.close(1006,'offline');
+  assert.match(b.get('status').textContent,/Retrying in 4 seconds/);
+  b.get('disconnect').onclick();
+  assert.equal(b.run('sessionKey'),null);assert.equal(b.run('keepTrying'),false);
+  b.run('connectWithKey(sessionKey)');assert.equal(b.Socket.latest,second);
+  assert.equal(b.get('login').hidden,false);
+});
+
+test('authentication rejection after a retry clears memory and requires user input',()=>{
+  const b=browser(),first=b.submit();first.onopen();first.close(1006,'offline');
+  b.run('connectWithKey(sessionKey)');
+  b.Socket.latest.close(4003,'Invalid access code');
+  assert.equal(b.run('sessionKey'),null);assert.equal(b.run('keepTrying'),false);
+  assert.equal(b.get('login').hidden,false);
 });

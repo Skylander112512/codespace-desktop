@@ -8,7 +8,7 @@ This is a working prototype, not a signed commercial remote-desktop product. It 
 
 Open [Skylander112512/codespace-desktop](https://github.com/Skylander112512/codespace-desktop) on the Chromebook. Select **Code → Codespaces** and open your existing Codespace, or create one on `main`.
 
-For an existing Codespace, stop `npm start` with Ctrl+C, then run `git pull --ff-only` before restarting it. Download the matching Mac host from the [latest release](https://github.com/Skylander112512/codespace-desktop/releases/latest). Version **0.2.3** adds optional **720p · 60 FPS** and **1080p · 60 FPS** modes; Smooth remains the default. Install the matching Mac host to use the new modes. Version **0.2.2** also keeps clicks and keys working with older viewers by enabling the separate motion channel only when the viewer supports it. Refresh the viewer after updating Codespaces. Version **0.2.1** fixes Mac clicks by preserving matching click counts and event numbers on mouse press, drag, and release. Version **0.2.0** added Apple hardware video encoding, adaptive quality, faster mouse delivery, a private Chromebook code, and saved Mac connection details. Replace the old Mac folder, including its bundled executable; replacing only the launcher does not update the host.
+For an existing Codespace, stop `npm start` with Ctrl+C, then run `git pull --ff-only` before restarting it. Download the matching Mac host from the [latest release](https://github.com/Skylander112512/codespace-desktop/releases/latest). Version **0.2.4** keeps the Mac host waiting and reconnecting while Codespaces is stopped or the network is offline. Open it before leaving; when you start the same Codespace and `npm start` later, it reconnects automatically. The browser also retries while its tab remains open. Version **0.2.3** adds optional **720p · 60 FPS** and **1080p · 60 FPS** modes; Smooth remains the default. Install the matching Mac host to use the new modes. Version **0.2.2** also keeps clicks and keys working with older viewers by enabling the separate motion channel only when the viewer supports it. Refresh the viewer after updating Codespaces. Version **0.2.1** fixes Mac clicks by preserving matching click counts and event numbers on mouse press, drag, and release. Version **0.2.0** added Apple hardware video encoding, adaptive quality, faster mouse delivery, a private Chromebook code, and saved Mac connection details. Replace the old Mac folder, including its bundled executable; replacing only the launcher does not update the host.
 
 ### Forking or using another GitHub account
 
@@ -53,7 +53,7 @@ For an Intel Mac or if using the source instead, install Python 3.12+ from [pyth
 
 Enter your **chosen code** (or the long viewer key if you skipped code setup) into the Codespaces viewer page and select **Connect to Mac**. Click the desktop to focus it. Mouse, dragging, scrolling, keyboard input, and a Command-Tab button are provided. `Ctrl → ⌘` maps Chromebook Control shortcuts to Mac Command shortcuts; turn it off for actual Control keys. Some browser/ChromeOS shortcuts are reserved by the Chromebook.
 
-**Disconnect** ends the viewer session. Stopping the Mac host with **Ctrl+C**, closing its Terminal window, or stopping Codespaces ends access. No background service or login item is installed. The host does not reconnect automatically after losing its server connection; restart it.
+**Disconnect** ends the viewer session. Stopping the Mac host with **Ctrl+C**, closing its Terminal window, or stopping Codespaces ends access. No background service or login item is installed. The Mac host automatically reconnects after temporary outages. It retries after 2, 4, 8, 16, 32, then 60 seconds, and keeps trying until stopped. Start the same Codespace, run `npm start`, and keep port 3000 Public when you are ready. It cannot start a stopped Codespace for you. No screen capture runs while no viewer is connected. Incorrect host keys still stop with a setup message.
 
 ## Confirmed Codespaces fix in 0.1.2
 
@@ -63,14 +63,14 @@ The Codespaces tunnel rewrites browser WebSocket `Origin` and `Host` headers to 
 
 The viewer stays on the key form until the server accepts the key. A failed connection leaves a readable error and close code. **Connection details** records authentication, the first displayed frame, direct-video state, and disconnects without storing keys.
 
-- **HTTP 302 / GitHub sign-in on the Mac:** port 3000 is private. In Codespaces → Ports, set it to **Public**. Recheck after restarting the Codespace. Browser sign-in does not sign in the standalone Mac host.
+- **HTTP 302 / GitHub sign-in on the Mac:** the Codespace may be stopped or port 3000 private. The host keeps waiting. In Codespaces → Ports, set it to **Public**. Recheck after restarting the Codespace. Browser sign-in does not sign in the standalone Mac host.
 - **4003:** use your code in the browser. If the saved Mac key changed, run the Mac host with `--setup`.
 - **4009 / already connected:** close the other host or viewer first.
-- **1006:** check that `npm start` is still running and the forwarded address is reachable. Reload the page after updating the server.
+- **1006 / Codespace offline:** leave the new Mac host open; it retries automatically. Start the Codespace and `npm start` when ready. The next retry may take up to a minute, plus connection time. Reload the viewer after updating its files.
 - **Screen capture failed:** enable Screen Recording for the launching host/Terminal and restart it.
 - **Video works but input does not:** enable Accessibility for the host/Terminal and restart it. The host reports when that permission is off.
 
-The Mac window now stays open on errors. Its timestamped messages show capture, first-frame delivery, ICE, and direct-video states. The Codespaces terminal records socket close codes. Version 0.2.3 appears in both the host banner and browser connection details.
+The Mac window now stays open on errors. Its timestamped messages show capture, first-frame delivery, ICE, and direct-video states. The Codespaces terminal records socket close codes. Version 0.2.4 appears in both the host banner and browser connection details.
 
 ## Latency and network behavior
 
@@ -89,7 +89,7 @@ For a better chance of smooth video on networks that require a relay, configure 
 
 ## Access and privacy
 
-Keys are generated randomly on first launch and stored in `.secrets.json` with owner-only file permissions. The file is git-ignored. The viewer accepts your chosen code or its long recovery key; the Mac uses a separate saved host key; one connection of each role is allowed. A second connection cannot displace an existing one. Keys are sent in WebSocket messages, not URLs or browser storage. WebRTC transport is encrypted. In fallback mode, TLS protects each hop, but the Codespaces relay handles the screen frames in memory; it is not end-to-end encrypted through that relay. No session recording is implemented.
+Keys are generated randomly on first launch and stored in `.secrets.json` with owner-only file permissions. The file is git-ignored. The viewer accepts your chosen code or its long recovery key; the Mac uses a separate saved host key; one connection of each role is allowed. A second connection cannot displace an existing one. Keys are sent in WebSocket messages, not URLs or browser storage. The viewer keeps its code only in tab memory to reconnect after an outage; Disconnect clears it. Refreshing or closing the tab requires entering the code again. WebRTC transport is encrypted. In fallback mode, TLS protects each hop, but the Codespaces relay handles the screen frames in memory; it is not end-to-end encrypted through that relay. No session recording is implemented.
 
 Codes have **no incorrect-attempt lockout**. A short numeric code is easier to guess than the generated long viewer key; choose a longer code if this matters for your deployment. Connection-count and message-size limits bound server resources.
 
