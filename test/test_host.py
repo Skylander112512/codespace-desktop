@@ -62,6 +62,7 @@ class Integration(unittest.IsolatedAsyncioTestCase):
         video_received=asyncio.Event();control_received=asyncio.Event();channels={};labels=[]
         @peer.on('track')
         def track(track):
+            if track.kind!='video':return
             async def receive():
                 frame=await track.recv()
                 if frame.width==1280:video_received.set()
@@ -97,6 +98,19 @@ class Integration(unittest.IsolatedAsyncioTestCase):
                     await video_received.wait();await control_received.wait()
                 await asyncio.sleep(.1)
                 self.assertEqual(set(labels),{'control','motion'} if input_protocol==2 else {'control'})
+                if input_protocol==2 and agent.audio:
+                    for enabled in (True,False):
+                        await ws.send(json.dumps({'type':'sound','enabled':enabled}))
+                        async with asyncio.timeout(10):
+                            while True:
+                                raw=await ws.recv()
+                                if isinstance(raw,bytes):
+                                    await ws.send(json.dumps({'type':'frame-ack'}));continue
+                                status=json.loads(raw)
+                                if status.get('type')=='sound-status':
+                                    self.assertEqual(status.get('enabled'),enabled,status);break
+                        self.assertEqual(agent.audio.enabled,enabled)
+                    self.assertIsNone(agent.audio.process)
                 channels['control'].send(json.dumps({'type':'input','action':'down','button':0,'x':.4,'y':.5,'seq':1}))
                 await asyncio.sleep(.05)
                 self.assertEqual(agent.controls.buttons,{0})

@@ -1,4 +1,4 @@
-Codespace Desktop 0.2.8 — Apple Silicon Mac / macOS 14+
+Codespace Desktop 0.2.9 — Apple Silicon Mac / macOS 14+
 
 Keep these files together. Open Start Mac Host.command.
 
@@ -18,7 +18,7 @@ The public download contains no personal code or host credentials.
 Screen Recording and Accessibility must be enabled for the launching host /
 Terminal in System Settings > Privacy & Security. Restart after granting them.
 The native ScreenEncoder helper shares only your main display; it records no
-microphone or audio. Closing the host ends access. There is no startup service.
+microphone. System sound is captured only while Sound is on in the viewer. Closing the host ends access. There is no startup service.
 
 Video defaults to Smooth (up to 60 FPS). Some browsers require reduced
 resolution for 60 FPS; select Sharper for up to 720p at 30 FPS on those browsers.
@@ -42,3 +42,11 @@ Open Text transfer in the viewer. Send to Mac replaces the Mac clipboard;
 paste into your Mac app with Cmd+V. Get from Mac reads its clipboard into
 the box, then Copy text copies it on the Chromebook. Plain text only, up to
 16 KB per request. There is no automatic clipboard synchronization.
+
+Mac sound (viewer and host 0.2.9+):
+Keep SystemAudio next to the Mac host executable. Connect and click Sound
+in the viewer to enable system audio. No BlackHole installation or audio
+device changes are needed. No microphone is captured. Sound requires WebRTC
+and starts off again after reconnecting or changing video quality.
+If permission is denied, enable Screen & System Audio Recording for this
+host/Terminal in macOS Privacy & Security, then restart the host.

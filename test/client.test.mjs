@@ -8,7 +8,7 @@ function browser(){
   const nodes=new Map();const documentHandlers={};
   const get=id=>{
     if(!nodes.has(id))nodes.set(id,{hidden:['desktop','connection-error'].includes(id),value:'',textContent:'',handlers:{},
-      addEventListener(type,fn){this.handlers[type]=fn;},removeAttribute(){},setAttribute(){},focus(){},select(){this.selected=true;},hasPointerCapture(){return false;},checked:false});
+      addEventListener(type,fn){this.handlers[type]=fn;},removeAttribute(){},setAttribute(){},pause(){},play(){return Promise.resolve();},focus(){},select(){this.selected=true;},hasPointerCapture(){return false;},checked:false});
     return nodes.get(id);
   };
   class Socket {
@@ -209,4 +209,24 @@ test('copy text uses the browser clipboard or selects text for manual copy',asyn
   b.context.navigator.clipboard.writeText=async()=>{throw new Error('Permission denied');};
   await b.get('copy-text').onclick();assert.equal(b.get('transfer-text').selected,true);
   assert.match(b.get('transfer-status').textContent,/Ctrl\+C/);
+});
+
+test('sound is opt-in, asks the Mac to start/stop capture, and resets on disconnect',()=>{
+  const b=browser(),ws=b.submit();
+  b.run("pc={connectionState:'connected',close(){}};receive({type:'status',text:'Ready',systemAudio:true})");
+  b.get('audio').srcObject={};b.run('soundButton()');assert.equal(ws.sent.length,0);
+  b.get('sound').onclick();assert.equal(ws.sent.at(-1).type,'sound');assert.equal(ws.sent.at(-1).enabled,true);
+  assert.equal(b.get('audio').muted,false);
+  b.run("receive({type:'sound-status',enabled:true})");assert.equal(b.get('sound').textContent,'Sound on');
+  b.get('sound').onclick();assert.equal(ws.sent.at(-1).enabled,false);assert.equal(b.get('audio').muted,true);
+  b.run("receive({type:'sound-status',enabled:false});cleanup()");
+  assert.equal(b.get('sound').disabled,true);assert.equal(b.get('audio').srcObject,null);
+});
+
+test('audio playback denial stops Mac sound capture and reports an actionable status',async()=>{
+  const b=browser(),ws=b.submit();b.run("pc={connectionState:'connected'};audioAvailable=true");
+  b.get('audio').srcObject={};b.get('audio').play=()=>Promise.reject(new Error('blocked'));
+  b.run('soundButton()');b.get('sound').onclick();await Promise.resolve();
+  assert.equal(ws.sent.at(-1).enabled,false);assert.equal(b.get('audio').muted,true);
+  assert.match(b.get('sound-status').textContent,/blocked/);
 });

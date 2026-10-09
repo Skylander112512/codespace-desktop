@@ -11,11 +11,12 @@ python_bin=${PYTHON:-python3}
 folder="$output_root/Codespace Desktop Mac"
 mkdir -p "$folder"
 cp "$build_root/dist/Codespace Desktop Host" "$folder/"
-cp "$project_dir/mac/bin/ScreenEncoder" "$folder/"
+cp "$project_dir/mac/bin/ScreenEncoder" "$project_dir/mac/bin/SystemAudio" "$folder/"
 cp "$project_dir/mac/Start Mac Host.command" "$project_dir/mac/Change Connection.command" "$folder/"
 cp "$project_dir/mac/README-Mac.txt" "$folder/"
-chmod +x "$folder/Codespace Desktop Host" "$folder/ScreenEncoder" "$folder/Start Mac Host.command" "$folder/Change Connection.command"
+chmod +x "$folder/Codespace Desktop Host" "$folder/ScreenEncoder" "$folder/SystemAudio" "$folder/Start Mac Host.command" "$folder/Change Connection.command"
 codesign --verify --strict "$folder/ScreenEncoder"
+codesign --verify --strict "$folder/SystemAudio"
 codesign --verify --strict "$folder/Codespace Desktop Host"
-(cd "$output_root" && /usr/bin/zip -q -r 'Codespace-Desktop-Mac-0.2.8.zip' 'Codespace Desktop Mac')
-printf 'Created %s\n' "$output_root/Codespace-Desktop-Mac-0.2.8.zip"
+(cd "$output_root" && /usr/bin/zip -q -r 'Codespace-Desktop-Mac-0.2.9.zip' 'Codespace Desktop Mac')
+printf 'Created %s\n' "$output_root/Codespace-Desktop-Mac-0.2.9.zip"

@@ -8,6 +8,7 @@ let inputSequence=0, lastReliable=0, pendingMotion=null, motionTimer;
 let relativeMouseAvailable=false;
 let preserveKeysOnUnlock=false, requestingGameMouse=false;
 let textTransferReady=false, transferNumber=0, pendingTransfer=null;
+let audioAvailable=false,soundWanted=false,soundBusy=false;
 const events=[];
 function detail(text){
   events.push(`${new Date().toLocaleTimeString()} · ${text}`);
@@ -71,7 +72,16 @@ function release(){
   if(document.pointerLockElement===$('screen'))document.exitPointerLock?.();
   held.clear();control({type:'input',action:'release'});
 }
-function closeRTC(){if(document.pointerLockElement===$('screen'))release();if(pc){pc.close();pc=null;}channel=null;motionChannel=null;useRTC=false;$('video').srcObject=null;$('video').hidden=true;lastVideoAt=0;previousStats=null;nativeStats={};$('performance').textContent='';}
+function soundButton(){
+  $('sound').disabled=!audioAvailable || pc?.connectionState!=='connected' || !$('audio').srcObject || soundBusy;
+  $('sound').textContent=soundBusy?'Sound…':soundWanted?'Sound on':'Sound off';
+  $('sound').setAttribute('aria-pressed',String(soundWanted));
+}
+function resetSound(){
+  soundWanted=false;soundBusy=false;$('audio').muted=true;$('audio').pause();$('audio').srcObject=null;soundButton();
+  $('sound-status').textContent='Sound off. Click Sound when the direct connection is ready.';
+}
+function closeRTC(){resetSound();if(document.pointerLockElement===$('screen'))release();if(pc){pc.close();pc=null;}channel=null;motionChannel=null;useRTC=false;$('video').srcObject=null;$('video').hidden=true;lastVideoAt=0;previousStats=null;nativeStats={};$('performance').textContent='';}
 async function sampleStats(){
   const peer=pc;
   if(!peer || polling)return;
@@ -129,10 +139,15 @@ async function offer(msg){
     channel=e.channel;channel.onmessage=e=>{try{receive(JSON.parse(e.data));}catch{}};
   };
   peer.ontrack=e=>{
+    if(e.track.kind==='audio'){
+      $('audio').srcObject=new MediaStream([e.track]);soundButton();return;
+    }
     try{if('jitterBufferTarget' in e.receiver)e.receiver.jitterBufferTarget=0;
       else if('playoutDelayHint' in e.receiver)e.receiver.playoutDelayHint=0;}catch{}
     $('video').srcObject=new MediaStream([e.track]);$('video').play().catch(()=>detail('Browser could not play direct video; relay remains available.'));};
-  peer.onconnectionstatechange=()=>{if(peer===pc){detail(`Direct video: ${peer.connectionState}`);chooseMode();}};
+  peer.onconnectionstatechange=()=>{if(peer===pc){detail(`Direct video: ${peer.connectionState}`);chooseMode();
+    if(['failed','disconnected','closed'].includes(peer.connectionState)){soundWanted=false;soundBusy=false;$('audio').muted=true;$('audio').pause();}
+    soundButton();}};
   try{
     await peer.setRemoteDescription({type:'offer',sdp:msg.sdp});
     const quality=$('quality').value||'smooth';
@@ -148,6 +163,14 @@ async function offer(msg){
   }catch(error){if(generation===current){detail(`Direct connection unavailable (${error.name}); using relay.`);status('Direct connection unavailable. Using compatibility relay.');}}
 }
 function receive(msg){
+  if(msg.type==='sound-status'){
+    soundBusy=false;
+    if(msg.enabled!==true){soundWanted=false;$('audio').muted=true;$('audio').pause();}
+    else if(!soundWanted)signal({type:'sound',enabled:false});
+    soundButton();
+    if(msg.error){$('sound-status').textContent=msg.error;detail(`Sound unavailable: ${msg.error}`);}
+    else $('sound-status').textContent=msg.enabled && soundWanted?'Mac sound on.':'Sound off.';
+  }
   if(msg.type==='clipboard-result' && pendingTransfer?.request===msg.request){
     const action=pendingTransfer.action;clearTimeout(pendingTransfer.timer);pendingTransfer=null;transferButtons();
     if(msg.ok!==true){$('transfer-status').textContent=msg.error||'Text transfer failed. Try again.';return;}
@@ -174,10 +197,12 @@ function receive(msg){
   if(msg.type==='status'){
     if(msg.relativeMouse===true){relativeMouseAvailable=true;$('game-mouse').disabled=false;}
     if(msg.textTransfer===true){textTransferReady=true;transferButtons();$('transfer-status').textContent='Ready. Text transfers only when you click Send or Get.';}
+    if(msg.systemAudio===true){audioAvailable=true;soundButton();}
     status(msg.text);detail(msg.text);
   }
   if(msg.type==='pong')$('latency').textContent=`${Math.max(0,Math.round(performance.now()-msg.at))} ms control round trip`;
   if(msg.type==='peer-left'){
+    audioAvailable=false;
     resetTransfer();
     relativeMouseAvailable=false;$('game-mouse').disabled=true;
     detail('Mac disconnected; the viewer remains connected to Codespaces.');
@@ -243,6 +268,7 @@ function connectWithKey(key){
 }
 
 function cleanup(reconnecting=false){
+  audioAvailable=false;
   resetTransfer();
   relativeMouseAvailable=false;$('game-mouse').disabled=true;
   generation++;pendingMotion=null;clearTimeout(motionTimer);motionTimer=null;clearInterval(statsTimer);clearTimeout(connectTimer);$('connect-button').disabled=false;closeRTC();ws=null;held.clear();gotFrame=false;
@@ -260,6 +286,19 @@ $('fullscreen').onclick=()=>{$('screen').requestFullscreen().catch(()=>status('F
 $('escape').onclick=()=>control({type:'input',action:'tap',code:'Escape'});
 $('cmd-tab').onclick=()=>control({type:'input',action:'shortcut',code:'Tab'});
 $('map-ctrl').onchange=release;
+$('sound').onclick=()=>{
+  if($('sound').disabled)return;
+  soundWanted=!soundWanted;soundBusy=true;
+  $('audio').muted=!soundWanted;soundButton();
+  signal({type:'sound',enabled:soundWanted});
+  if(soundWanted){
+    $('sound-status').textContent='Starting Mac sound…';
+    $('audio').play().catch(()=>{
+      soundWanted=false;soundBusy=false;$('audio').muted=true;soundButton();
+      signal({type:'sound',enabled:false});$('sound-status').textContent='Audio playback was blocked. Click Sound again to retry.';
+    });
+  }else{$('audio').pause();$('sound-status').textContent='Stopping Mac sound…';}
+};
 $('text-transfer').onclick=()=>{
   const panel=$('transfer-panel');panel.hidden=!panel.hidden;
   $('text-transfer').setAttribute('aria-expanded',String(!panel.hidden));

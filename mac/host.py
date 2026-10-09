@@ -21,12 +21,13 @@ from adaptive import AdaptiveQuality
 from video_quality import select_quality
 from host_settings import load_settings, save_settings
 from text_clipboard import TextClipboard
+from native_audio import NativeAudioTrack, audio_helper_path
 from PIL import Image, ImageDraw
 from websockets.asyncio.client import connect
 import certifi
 from websockets.exceptions import ConnectionClosed, InvalidStatus
 
-VERSION = '0.2.8'
+VERSION = '0.2.9'
 
 
 class DirectConnect(connect):
@@ -264,6 +265,7 @@ class Host:
     def __init__(self,demo=False,native=None):
         self.capture=Capture(demo); self.controls=MacInput(demo)
         self.clipboard=TextClipboard(demo)
+        self.audio=None
         self.prefer_native=(not demo) if native is None else native
         self.native=None; self.quality=AdaptiveQuality(); self.on_authenticated=None
         self.pc=None; self.channel=None; self.motion=None; self.ws=None; self.active=False; self.rtc=False
@@ -287,11 +289,13 @@ class Host:
 
     async def end_session(self):
         self.active=False; self.rtc=False
-        for task in self.tasks:task.cancel()
-        for task in self.tasks:
+        tasks=list(self.tasks);self.tasks.clear()
+        for task in tasks:task.cancel()
+        for task in tasks:
             with contextlib.suppress(asyncio.CancelledError,Exception): await task
         self.tasks.clear()
         if self.pc:await self.pc.close(); self.pc=None
+        if self.audio:await self.audio.close();self.audio=None
         if self.native:await self.native.close(); self.native=None
         self.channel=None; self.motion=None; self.controls.release(); self.ack.set()
         self.controls.last_reliable_seq=0; self.controls.last_motion_seq=0
@@ -299,7 +303,7 @@ class Host:
     async def start_session(self):
         await self.end_session(); self.active=True
         print('Viewer connected. Close this window or press Ctrl+C to stop access.',flush=True)
-        await self.send({'type':'status','text':f'Mac host {VERSION} connected. Starting screen capture…','relativeMouse':True,'textTransfer':True})
+        await self.send({'type':'status','text':f'Mac host {VERSION} connected. Starting screen capture…','relativeMouse':True,'textTransfer':True,'systemAudio':bool(audio_helper_path())})
         self.quality=AdaptiveQuality()
         self.tasks={asyncio.create_task(self.relay()),asyncio.create_task(self.negotiate()),asyncio.create_task(self.telemetry())}
 
@@ -320,6 +324,9 @@ class Host:
                     await native.close(); self.native=None
                     log(f'Hardware capture unavailable ({error}); using software video.')
             sender=pc.addTrack(track); self.sender=sender
+            if audio_helper_path():
+                self.audio=NativeAudioTrack(demo=self.capture.demo)
+                pc.addTrack(self.audio)
             if self.native:
                 codecs=[codec for codec in sender.getCapabilities('video').codecs
                         if codec.mimeType.lower()=='video/h264' and codec.parameters.get('profile-level-id')=='42e01f']
@@ -347,6 +354,7 @@ class Host:
                 log(f'Direct video: {pc.connectionState}')
                 if pc.connectionState in ('failed','disconnected','closed'):
                     self.rtc=False; self.controls.release()
+                    if self.audio:await self.audio.disable()
             offer=await pc.createOffer()
             if self.native:
                 # Advertise up to 1080p60 (level 4.2); honor the answer before sending.
@@ -376,9 +384,25 @@ class Host:
             settings=self.quality.update(msg)
             if settings:self.native.configure(*settings)
 
+    async def set_sound(self,msg):
+        enabled=msg.get('enabled')
+        if type(enabled) is not bool or not self.active:return
+        if not self.audio or not self.pc or self.pc.connectionState!='connected':
+            await self.send({'type':'sound-status','enabled':False,'error':'Sound needs a direct connection and the updated Mac host.'});return
+        try:
+            if enabled:await self.audio.enable()
+            else:await self.audio.disable()
+            await self.send({'type':'sound-status','enabled':enabled})
+        except Exception as error:
+            await self.send({'type':'sound-status','enabled':False,'error':str(error)})
+
     async def telemetry(self):
         while self.active:
             await asyncio.sleep(1)
+            if self.audio and self.audio.failure:
+                error=self.audio.failure;self.audio.failure=None
+                await self.audio.disable()
+                await self.send({'type':'sound-status','enabled':False,'error':error})
             native=self.native
             if native and native.failure:
                 self.rtc=False
@@ -470,6 +494,9 @@ class Host:
                     elif kind=='input' and self.active:
                         with contextlib.suppress(ValueError,TypeError,KeyError):self.controls.handle(msg)
                     elif kind=='clipboard' and self.active:await self.transfer_text(msg)
+                    elif kind=='sound' and self.active:
+                        task=asyncio.create_task(self.set_sound(msg))
+                        self.tasks.add(task);task.add_done_callback(self.tasks.discard)
                     elif kind=='quality' and self.active:await self.start_session()
                     elif kind=='feedback' and self.active:self.feedback(msg)
                     elif kind=='frame-ack':self.ack.set()
