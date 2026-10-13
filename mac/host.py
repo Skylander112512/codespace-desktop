@@ -27,7 +27,7 @@ from websockets.asyncio.client import connect
 import certifi
 from websockets.exceptions import ConnectionClosed, InvalidStatus
 
-VERSION = '0.2.9'
+VERSION = '0.2.10'
 
 
 class DirectConnect(connect):
@@ -381,6 +381,8 @@ class Host:
 
     def feedback(self,msg):
         if self.native and not self.native.failure:
+            if msg.get('requestKeyframe') is True:
+                self.native.request_keyframe();return
             settings=self.quality.update(msg)
             if settings:self.native.configure(*settings)
 

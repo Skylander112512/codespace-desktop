@@ -10,6 +10,7 @@ class AdaptiveQuality:
         self.max_fps=max_fps
         self.fps = max_fps
         self.good = 0
+        self.bad = 0
         self.updated = 0
 
     def update(self, report, now=None):
@@ -25,16 +26,22 @@ class AdaptiveQuality:
         slow_decoder = decode > 20
         if congested or slow_decoder:
             self.good = 0
+            self.bad += 1
             self.bitrate = max(750_000, int(self.bitrate * .75))
-            if slow_decoder or self.bitrate < 2_000_000:
-                self.fps = 30 if self.bitrate >= 1_000_000 else 15
+            # Lower picture bitrate first. A brief Wi-Fi dip must not lock a
+            # healthy 60 FPS decoder to 30 FPS for the next minute.
+            if self.bad >= 2 and slow_decoder:
+                self.fps = min(self.max_fps, 30)
+            elif self.bad >= 3 and self.bitrate < 1_000_000:
+                self.fps = min(self.max_fps, 30)
         elif loss < .01 and buffer < 40 and decode < 12 and received >= self.fps * .7:
+            self.bad = 0
             self.good += 1
-            if self.good >= 4:
+            if self.good >= 3:
                 self.good = 0
-                self.bitrate = min(self.max_bitrate, self.bitrate + 250_000)
-                if self.bitrate >= 2_500_000: self.fps = self.max_fps
-                elif self.bitrate >= 1_250_000: self.fps = 30
+                self.bitrate = min(self.max_bitrate, self.bitrate + max(250_000, int(self.bitrate * .15)))
+                if self.bitrate >= 1_250_000: self.fps = self.max_fps
         else:
             self.good = 0
+            self.bad = 0
         return self.bitrate, self.fps

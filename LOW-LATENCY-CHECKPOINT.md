@@ -117,3 +117,15 @@ User requested sound, possibly BlackHole. Added a separate native ScreenCaptureK
 Built and signature-verified Mac package, verified ZIP integrity, wrote checksum, installed separate Downloads/Codespace Desktop Mac 0.2.9 folder. Low disk space required removal only of disposable prior build caches: work/mac-build/build, work/mac-build/dist, work/mac-build-fix/build and work/mac-build-fix/dist. Prior Downloads folders and pairing settings preserved. Real Codespace was not opened, started or changed. Publication next.
 
 Published v0.2.9 (b828f29) with verified Mac ZIP/checksum upload responses. Main and low-latency updated. Separate Downloads/Codespace Desktop Mac 0.2.9 installed and signatures rechecked. User must restart into that launcher, pull/restart their own Codespace, refresh the viewer and turn Sound on. Actual Mac app/game sound confirmation remains pending.
+
+
+## Direct video recovery and smoother adaptation — v0.2.10
+User reports intermittent black direct video and variable lag; requests updating existing Codespace files without starting/restarting its server. Follow-up: do not close the current Mac host unless replacing it with the new running host. Current real Mac host has been left untouched.
+
+Added decoded-frame gating (two healthy interval samples before switching off relay), keyframe requests on decode stalls, bounded automatic negotiation recovery (two attempts, 30-second cooldown, reset after a healthy minute), and explicit Retry video. Recovery respects manual relay and hidden tabs. Receiver loss feedback continues when packets arrive but frames cannot decode. Set zero target buffer on audio as well as video to reduce avoidable synchronized playout buffering where supported. Healthy sessions do not auto-restart. Sustained reconnects release input and reset audio to off.
+
+Adaptation now lowers bitrate before cutting FPS during network trouble, requires persistent overload before reducing FPS, and recovers selected FPS/bitrate more quickly after consecutive clean reports. Initial encoder presets and capture remain unchanged. No guarantee of fixing the user's particular black screen without their next real-network test.
+
+40 Node tests, 5 latency/settings tests, 7 host integration/unit tests, and 6 native video tests pass. Synthetic hardware: about 58 FPS at 720p and 57 at 1080p. Built signed package and verified ZIP integrity. Local browser test and publication in progress. Existing Codespace is accessible but VS Code Trust Folder & Continue prompt requires approval; asked through async tool. Do not approve until answered. No server command or remote file update yet.
+
+Local browser fault injection passed: paused only the synthetic ScreenEncoder process; viewer fell back to relay, automatically renegotiated, and resumed 720p at approximately 60 FPS. Screenshot outputs/stability-preview.jpg. Test host/server/tab stopped. Separate Downloads/Codespace Desktop Mac 0.2.10 installed without closing the existing real host; actual pairing unchanged. Publication next.

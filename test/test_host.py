@@ -6,7 +6,7 @@ from pathlib import Path
 import unittest
 import sys
 sys.path.insert(0,str(Path(__file__).parents[1]/"mac"))
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 from websockets.asyncio.server import serve
 from websockets.http11 import Response
 from websockets.datastructures import Headers
@@ -21,6 +21,16 @@ class UnitTests(unittest.TestCase):
         for url in ['http://remote.example','https://a:b@remote.example','https://remote.example/path','https://remote.example/?token=abc']:
             with self.assertRaises(ValueError):host.websocket_url(url)
         self.assertEqual(host.websocket_url('https://sample-3000.app.github.dev'),'wss://sample-3000.app.github.dev/ws')
+
+    def test_keyframe_recovery_does_not_change_video_quality(self):
+        agent=host.Host(demo=True)
+        agent.native=Mock(failure=None)
+        original=agent.quality.bitrate
+        agent.feedback({'requestKeyframe':True})
+        agent.native.request_keyframe.assert_called_once()
+        agent.native.configure.assert_not_called()
+        self.assertEqual(agent.quality.bitrate,original)
+        agent.capture.close()
 
     def test_demo_cli_prompts_for_url_without_mac_permissions(self):
         async def fake_run(agent, url, key):

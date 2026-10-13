@@ -6,6 +6,28 @@ let reconnectTimer, reconnectDelay=2000, sessionKey=null, keepTrying=false, auth
 let lastVideoAt=0, previousStats, polling=false, nativeStats={};
 let inputSequence=0, lastReliable=0, pendingMotion=null, motionTimer;
 let relativeMouseAvailable=false;
+let peerStartedAt=0, connectedAt=0, lastRecoveryAt=0, recoveryAttempts=0, healthySince=0;
+let lastKeyframeAt=0, decodedSamples=0;
+function restartDirect(automatic=false){
+  if(!pc || ws?.readyState!==WebSocket.OPEN)return;
+  if(automatic)recoveryAttempts++;
+  else recoveryAttempts=0;
+  lastRecoveryAt=performance.now();
+  detail(automatic?'Direct video stalled; reconnecting it automatically.':'Retrying direct video.');
+  release();closeRTC();chooseMode();signal({type:'quality'});
+}
+function recoverDirect(){
+  if(!pc || document.hidden || $('relay').checked)return;
+  const now=performance.now();
+  const age=now-(lastVideoAt || connectedAt || peerStartedAt);
+  if(pc.connectionState==='connected' && age>1500 && now-lastKeyframeAt>=2000){
+    lastKeyframeAt=now;
+    signal({type:'feedback',requestKeyframe:true});
+  }
+  const stalled=connectedAt ? age>8000 : now-peerStartedAt>20000;
+  if(stalled && recoveryAttempts<2 && (!lastRecoveryAt || now-lastRecoveryAt>30000))restartDirect(true);
+}
+
 let preserveKeysOnUnlock=false, requestingGameMouse=false;
 let textTransferReady=false, transferNumber=0, pendingTransfer=null;
 let audioAvailable=false,soundWanted=false,soundBusy=false;
@@ -81,7 +103,7 @@ function resetSound(){
   soundWanted=false;soundBusy=false;$('audio').muted=true;$('audio').pause();$('audio').srcObject=null;soundButton();
   $('sound-status').textContent='Sound off. Click Sound when the direct connection is ready.';
 }
-function closeRTC(){resetSound();if(document.pointerLockElement===$('screen'))release();if(pc){pc.close();pc=null;}channel=null;motionChannel=null;useRTC=false;$('video').srcObject=null;$('video').hidden=true;lastVideoAt=0;previousStats=null;nativeStats={};$('performance').textContent='';}
+function closeRTC(){resetSound();if(document.pointerLockElement===$('screen'))release();if(pc){pc.close();pc=null;}channel=null;motionChannel=null;useRTC=false;peerStartedAt=0;connectedAt=0;decodedSamples=0;healthySince=0;$('video').srcObject=null;$('video').hidden=true;lastVideoAt=0;previousStats=null;nativeStats={};$('performance').textContent='';}
 async function sampleStats(){
   const peer=pc;
   if(!peer || polling)return;
@@ -100,7 +122,11 @@ async function sampleStats(){
     previousStats=inbound;
     if(!prior || prior.id!==inbound.id)return;
     const frames=inbound.framesDecoded-prior.framesDecoded;
-    if(frames>0)lastVideoAt=performance.now();
+    if(frames>0){
+      lastVideoAt=performance.now();decodedSamples++;
+      if(!healthySince)healthySince=lastVideoAt;
+      if(lastVideoAt-healthySince>60000)recoveryAttempts=0;
+    }else{decodedSamples=0;healthySince=0;}
     const elapsed=(inbound.timestamp-prior.timestamp)/1000;
     if(elapsed<=0 || frames<0)return;
     const delta=key=>Math.max(0,(inbound[key]||0)-(prior[key]||0));
@@ -114,16 +140,16 @@ async function sampleStats(){
     const encode=Number.isFinite(nativeStats.encode_ms)?` · ${Math.round(nativeStats.encode_ms)} ms encode`:'';
     $('performance').textContent=useRTC?`${Math.round(fps)} FPS · ${inbound.frameWidth||'?'}×${inbound.frameHeight||'?'} · ${codec} · ${route}${encode} · ${Math.round(decode)} ms decode · ${Math.round(buffer)} ms video buffer`:'Compatibility relay · up to 15 FPS';
     // Avoid interpreting an idle screen as a decoder/bandwidth problem.
-    if(frames>0 && useRTC && !document.hidden)control({type:'feedback',fps,loss:lost/Math.max(1,packets+lost),decode_ms:decode,buffer_ms:buffer});
+    if((frames>0 || packets+lost>0) && !document.hidden)control({type:'feedback',fps,loss:lost/Math.max(1,packets+lost),decode_ms:decode,buffer_ms:buffer});
   }catch{ /* Stats are optional; video and input continue on older browsers. */ }
   finally{polling=false;}
 }
 function chooseMode(){
   const previous=useRTC;
-  useRTC=Boolean(!$('relay').checked && pc?.connectionState==='connected' && $('video').readyState>=2 && performance.now()-lastVideoAt<2500);
+  useRTC=Boolean(!$('relay').checked && pc?.connectionState==='connected' && $('video').readyState>=2 && lastVideoAt>0 && performance.now()-lastVideoAt<1500 && (previous || decodedSamples>=2));
   if(previous!==useRTC){release();detail(useRTC?'Direct video is playing.':'Using compatibility relay.');}
   signal({type:'mode',rtc:useRTC});
-  $('video').hidden=!useRTC;$('frame').hidden=useRTC||!gotFrame;
+  $('video').hidden=!useRTC;$('frame').hidden=useRTC||!gotFrame;$('retry-direct').disabled=!pc;
   $('mode-label').textContent=useRTC?'Direct / WebRTC video':'Compatibility relay';
   if(gotFrame||useRTC)$('placeholder').hidden=true;
   if(useRTC)status(document.pointerLockElement===$('screen')?'Game mouse on · move to turn · Esc releases mouse':'Connected · click the screen to use your Mac');
@@ -132,20 +158,21 @@ function chooseMode(){
 async function offer(msg){
   const current=generation;
   closeRTC();
-  const peer=new RTCPeerConnection({iceServers:msg.iceServers||[]});pc=peer;
+  const peer=new RTCPeerConnection({iceServers:msg.iceServers||[]});pc=peer;peerStartedAt=performance.now();lastKeyframeAt=0;
   peer.ondatachannel=e=>{
     if(e.channel.label==='motion'){motionChannel=e.channel;return;}
     if(e.channel.label!=='control')return;
     channel=e.channel;channel.onmessage=e=>{try{receive(JSON.parse(e.data));}catch{}};
   };
   peer.ontrack=e=>{
+    if(peer!==pc)return;
+    try{if('jitterBufferTarget' in e.receiver)e.receiver.jitterBufferTarget=0;
+      else if('playoutDelayHint' in e.receiver)e.receiver.playoutDelayHint=0;}catch{}
     if(e.track.kind==='audio'){
       $('audio').srcObject=new MediaStream([e.track]);soundButton();return;
     }
-    try{if('jitterBufferTarget' in e.receiver)e.receiver.jitterBufferTarget=0;
-      else if('playoutDelayHint' in e.receiver)e.receiver.playoutDelayHint=0;}catch{}
     $('video').srcObject=new MediaStream([e.track]);$('video').play().catch(()=>detail('Browser could not play direct video; relay remains available.'));};
-  peer.onconnectionstatechange=()=>{if(peer===pc){detail(`Direct video: ${peer.connectionState}`);chooseMode();
+  peer.onconnectionstatechange=()=>{if(peer===pc){detail(`Direct video: ${peer.connectionState}`);if(peer.connectionState==='connected')connectedAt=performance.now();chooseMode();
     if(['failed','disconnected','closed'].includes(peer.connectionState)){soundWanted=false;soundBusy=false;$('audio').muted=true;$('audio').pause();}
     soundButton();}};
   try{
@@ -188,7 +215,7 @@ function receive(msg){
     status('Waiting for your Mac…');$('connection').textContent='Connected to Codespaces';
     detail(`Connection code accepted. Server ${msg.version||'0.1.0'}; waiting for Mac.`);
     statsTimer=setInterval(async()=>{
-      await sampleStats();chooseMode();control({type:'ping',at:performance.now()});
+      await sampleStats();chooseMode();recoverDirect();control({type:'ping',at:performance.now()});
     },1000);
   }
   if(msg.type==='host-ready'){status('Mac found. Connecting…');detail('Mac authenticated. Waiting for its first screen frame.');}
@@ -211,13 +238,15 @@ function receive(msg){
     $('latency').textContent='';status('Mac offline. Waiting for the host to reconnect…');
   }
 }
-$('video').addEventListener('loadeddata',()=>{lastVideoAt=performance.now();chooseMode();});
+// Decoder statistics, not loadeddata or advancing media time, confirm live video.
+$('video').addEventListener('loadeddata',chooseMode);
+$('retry-direct').onclick=()=>restartDirect();
 $('quality').addEventListener('change',()=>{release();signal({type:'quality'});});
 $('relay').addEventListener('change',()=>{release();chooseMode();});
 $('connect-form').addEventListener('submit',event=>{
   event.preventDefault();if(ws)return;
   const key=$('key').value.trim();if(!key)return;
-  clearTimeout(reconnectTimer);sessionKey=key;keepTrying=true;reconnectDelay=2000;
+  clearTimeout(reconnectTimer);recoveryAttempts=0;lastRecoveryAt=0;sessionKey=key;keepTrying=true;reconnectDelay=2000;
   connectWithKey(key);
 });
 function connectWithKey(key){

@@ -230,3 +230,45 @@ test('audio playback denial stops Mac sound capture and reports an actionable st
   assert.equal(ws.sent.at(-1).enabled,false);assert.equal(b.get('audio').muted,true);
   assert.match(b.get('sound-status').textContent,/blocked/);
 });
+
+test('loadeddata alone cannot replace a working relay with black direct video',()=>{
+  const b=browser();b.submit();b.get('video').readyState=4;
+  b.run("pc={connectionState:'connected'};gotFrame=true");
+  b.get('video').handlers.loadeddata();
+  assert.equal(b.run('useRTC'),false);assert.equal(b.get('frame').hidden,false);
+  b.run('lastVideoAt=100;decodedSamples=1;chooseMode()');assert.equal(b.run('useRTC'),false);
+  b.run('decodedSamples=2;chooseMode()');assert.equal(b.run('useRTC'),true);
+});
+
+test('stalled video requests a keyframe, then retries with a cooldown and attempt bound',()=>{
+  const b=browser(),ws=b.submit();b.context.performance.now=()=>3000;
+  b.run("pc={connectionState:'connected',close(){}};connectedAt=100;peerStartedAt=100;recoverDirect()");
+  assert.equal(ws.sent.at(-1).requestKeyframe,true);
+  b.run('recoverDirect()');assert.equal(ws.sent.length,1);
+  b.context.performance.now=()=>10000;b.run('recoverDirect()');
+  assert.equal(ws.sent.at(-1).type,'quality');assert.equal(b.run('pc'),null);
+  b.run("pc={connectionState:'failed',close(){}};peerStartedAt=100;recoverDirect()");
+  assert.equal(b.run('recoveryAttempts'),1);
+  b.context.performance.now=()=>41000;b.run('recoverDirect()');
+  assert.equal(b.run('recoveryAttempts'),2);
+  b.run("pc={connectionState:'failed',close(){}};peerStartedAt=100");
+  b.context.performance.now=()=>80000;b.run('recoverDirect()');
+  assert.notEqual(b.run('pc'),null);assert.equal(b.run('recoveryAttempts'),2);
+  b.get('retry-direct').onclick();assert.equal(b.run('recoveryAttempts'),0);
+});
+
+test('healthy direct video and manually selected relay do not trigger recovery',()=>{
+  const b=browser(),ws=b.submit();b.context.performance.now=()=>100000;
+  b.run("pc={connectionState:'connected'};lastVideoAt=99900;connectedAt=100;recoverDirect()");
+  assert.equal(ws.sent.length,0);
+  b.get('relay').checked=true;b.run('lastVideoAt=100;recoverDirect()');assert.equal(ws.sent.length,0);
+  b.get('relay').checked=false;b.context.document.hidden=true;b.run('recoverDirect()');assert.equal(ws.sent.length,0);
+});
+
+test('zero decoded frames still send loss feedback so a blocked stream can adapt',async()=>{
+  const b=browser(),ws=b.submit();b.context.performance.now=()=>10000;
+  b.run(`pc={connectionState:'connected',getStats:async()=>new Map([['v',{id:'v',type:'inbound-rtp',kind:'video',framesDecoded:0,timestamp:2000,packetsReceived:80,packetsLost:20}]])};
+    previousStats={id:'v',framesDecoded:0,timestamp:1000,packetsReceived:0,packetsLost:0};`);
+  await b.run('sampleStats()');
+  const feedback=ws.sent.find(m=>m.type==='feedback');assert.equal(feedback.loss,.2);assert.equal(feedback.fps,0);
+});

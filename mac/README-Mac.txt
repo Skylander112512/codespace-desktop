@@ -1,4 +1,4 @@
-Codespace Desktop 0.2.9 — Apple Silicon Mac / macOS 14+
+Codespace Desktop 0.2.10 — Apple Silicon Mac / macOS 14+
 
 Keep these files together. Open Start Mac Host.command.
 
@@ -50,3 +50,10 @@ device changes are needed. No microphone is captured. Sound requires WebRTC
 and starts off again after reconnecting or changing video quality.
 If permission is denied, enable Screen & System Audio Recording for this
 host/Terminal in macOS Privacy & Security, then restart the host.
+
+Video stability (viewer and host 0.2.10+):
+The viewer keeps the relay picture until direct frames are decoding, requests
+a fresh frame after a stall, and automatically retries sustained freezes.
+Retry video provides a manual retry. A video reconnect releases input and
+turns sound off. Wi-Fi recovery now prioritizes retaining/restoring your
+selected FPS while adjusting picture bitrate first.

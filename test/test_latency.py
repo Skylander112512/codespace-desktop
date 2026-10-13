@@ -28,21 +28,39 @@ class LatencyTests(unittest.TestCase):
         self.assertFalse(controls.keys)
         self.assertFalse(controls.buttons)
 
-    def test_adaptation_reduces_under_loss_and_recovers_gradually(self):
+    def test_adaptation_preserves_fps_through_brief_loss_then_recovers(self):
         quality=AdaptiveQuality()
         bad={'loss':.1,'decode_ms':3,'buffer_ms':90,'fps':60}
         self.assertEqual(quality.update(bad,now=10),(3_000_000,60))
         self.assertIsNone(quality.update(bad,now=11))
         quality.update(bad,now=12);quality.update(bad,now=14)
-        self.assertEqual(quality.fps,30)
+        self.assertEqual(quality.fps,60)
         bitrate=quality.bitrate
-        good={'loss':0,'decode_ms':3,'buffer_ms':10,'fps':30}
-        for now in (16,18,20):quality.update(good,now=now)
+        good={'loss':0,'decode_ms':3,'buffer_ms':10,'fps':60}
+        for now in (16,18):quality.update(good,now=now)
         self.assertEqual(quality.bitrate,bitrate)
-        quality.update(good,now=22)
-        self.assertEqual(quality.bitrate,bitrate+250_000)
+        quality.update(good,now=20)
+        self.assertGreater(quality.bitrate,bitrate)
         self.assertIsNone(quality.update({**good,'loss':float('nan')},now=30))
         self.assertIsNone(quality.update({**good,'fps':-1},now=30))
+
+    def test_persistent_decoder_overload_reduces_fps_and_clean_samples_restore_it(self):
+        quality=AdaptiveQuality()
+        bad={'loss':0,'decode_ms':25,'buffer_ms':30,'fps':30}
+        quality.update(bad,now=10);self.assertEqual(quality.fps,60)
+        quality.update(bad,now=12);self.assertEqual(quality.fps,30)
+        good={**bad,'decode_ms':4}
+        for now in (14,16,18):quality.update(good,now=now)
+        self.assertEqual(quality.fps,60)
+        limited=AdaptiveQuality(max_fps=30)
+        for now in (10,12,14):limited.update(good,now=now)
+        self.assertEqual(limited.fps,30)
+
+    def test_persistent_severe_loss_remains_bounded(self):
+        quality=AdaptiveQuality()
+        bad={'loss':.3,'decode_ms':3,'buffer_ms':200,'fps':0}
+        for now in range(10,40,2):quality.update(bad,now=now)
+        self.assertEqual((quality.bitrate,quality.fps),(750_000,30))
 
     def test_saved_settings_are_private_and_survive_next_launch(self):
         with tempfile.TemporaryDirectory() as folder:

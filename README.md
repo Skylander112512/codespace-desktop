@@ -160,3 +160,8 @@ Use viewer and Mac host **0.2.9 or newer**, including the bundled `SystemAudio` 
 This uses [Apple ScreenCaptureKit system audio](https://developer.apple.com/documentation/screencapturekit/scstreamconfiguration/capturesaudio), not the microphone. BlackHole, audio-device changes, and Chromebook extensions are not needed. Audio uses stereo 48 kHz Opus over the encrypted WebRTC connection. A separate capture helper and a bounded PCM queue keep it independent of the video encoder. JPEG-only connections do not carry sound.
 
 Tests use generated tones and synthetic screen content, never the user's live audio. Native capture permission and sound from your actual Mac apps still need your first-run check.
+
+### Video recovery (0.2.10)
+The viewer keeps the compatibility picture until direct video has decoded frames across two samples. If direct video freezes, it falls back, requests a fresh H.264 keyframe, and retries negotiation after a sustained stall. Automatic retries are spaced at least 30 seconds apart and limited to two until a minute of healthy video; Retry video offers an explicit retry. Manual compatibility mode and background tabs do not trigger automatic retries. Reconnecting video releases held input and turns sound off; enable Sound again afterward.
+
+Quality adaptation lowers bitrate before reducing 60 FPS for network trouble, requires sustained decoder overload before dropping FPS, and restores the selected FPS after clean reports. This improves recovery behavior but cannot guarantee a particular FPS or latency on unstable Wi-Fi. Screen capture, encoding presets, and default quality are unchanged.

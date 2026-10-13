@@ -18,5 +18,5 @@ chmod +x "$folder/Codespace Desktop Host" "$folder/ScreenEncoder" "$folder/Syste
 codesign --verify --strict "$folder/ScreenEncoder"
 codesign --verify --strict "$folder/SystemAudio"
 codesign --verify --strict "$folder/Codespace Desktop Host"
-(cd "$output_root" && /usr/bin/zip -q -r 'Codespace-Desktop-Mac-0.2.9.zip' 'Codespace Desktop Mac')
-printf 'Created %s\n' "$output_root/Codespace-Desktop-Mac-0.2.9.zip"
+(cd "$output_root" && /usr/bin/zip -q -r 'Codespace-Desktop-Mac-0.2.10.zip' 'Codespace Desktop Mac')
+printf 'Created %s\n' "$output_root/Codespace-Desktop-Mac-0.2.10.zip"
