@@ -54,7 +54,9 @@ Video stability (viewer and host 0.2.12+):
 The viewer keeps the relay picture until direct frames are decoding, requests
 a fresh frame after a stall, and automatically retries sustained freezes.
 Retry video provides a manual retry. A video reconnect releases input. Wi-Fi recovery now prioritizes retaining/restoring your
-selected FPS while adjusting picture bitrate first.
+selected FPS while adjusting picture bitrate first. Buffer delay alone no longer
+forces 30 FPS or unlimited bitrate cuts; loss, severe frame starvation and slow
+decoding still reduce load. This cannot eliminate Wi-Fi/router latency spikes.
 
 
 Performance diagnostics (0.2.12):

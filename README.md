@@ -162,7 +162,7 @@ If you want sound, you can always go back to the previous published version, **[
 ### Video recovery (0.2.10)
 The viewer keeps the compatibility picture until direct video has decoded frames across two samples. If direct video freezes, it falls back, requests a fresh H.264 keyframe, and retries negotiation after a sustained stall. Automatic retries are spaced at least 30 seconds apart and limited to two until a minute of healthy video; Retry video offers an explicit retry. Manual compatibility mode and background tabs do not trigger automatic retries. Reconnecting video releases held input.
 
-Quality adaptation lowers bitrate before reducing 60 FPS for network trouble, requires sustained decoder overload before dropping FPS, and restores the selected FPS after clean reports. This improves recovery behavior but cannot guarantee a particular FPS or latency on unstable Wi-Fi. Screen capture, encoding presets, and default quality are unchanged.
+Quality adaptation lowers bitrate before reducing 60 FPS for packet loss or severe frame starvation, requires sustained decoder overload before dropping FPS, and restores the selected FPS after clean reports. In 0.2.12, buffer delay alone gets at most three consecutive bitrate reductions until clean recovery; it no longer forces a healthy, adequately supplied decoder to 30 FPS. This avoids repeatedly cutting picture quality for a fixed network/jitter delay. This improves recovery behavior but cannot guarantee a particular FPS or latency on unstable Wi-Fi. Screen capture, encoding presets, and default quality are unchanged.
 
 
 Performance diagnostics (0.2.12):

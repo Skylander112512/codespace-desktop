@@ -12,6 +12,7 @@ class AdaptiveQuality:
         self.good = 0
         self.bad = 0
         self.updated = 0
+        self.buffer_cuts = 0
 
     def update(self, report, now=None):
         now = time.monotonic() if now is None else now
@@ -22,23 +23,33 @@ class AdaptiveQuality:
         if loss > 1 or decode > 10000 or buffer > 10000 or received > 240 or now-self.updated < 2:
             return None
         self.updated = now
-        congested = loss > .03 or buffer > 80
+        # A fixed jitter/playout delay is not itself proof that the link cannot
+        # carry the video. Try a few bitrate reductions, then hold if frames
+        # still arrive and decoding is healthy. Loss / frame starvation retain
+        # the full congestion response.
+        bandwidth_pressure = loss > .03 or (buffer > 80 and received < self.fps * .5)
+        buffer_pressure = buffer > 80
+        congested = bandwidth_pressure or buffer_pressure
         slow_decoder = decode > 20
         if congested or slow_decoder:
             self.good = 0
             self.bad += 1
-            self.bitrate = max(750_000, int(self.bitrate * .75))
+            if bandwidth_pressure or slow_decoder or self.buffer_cuts < 3:
+                self.bitrate = max(750_000, int(self.bitrate * .75))
+                if buffer_pressure and not bandwidth_pressure and not slow_decoder:
+                    self.buffer_cuts += 1
             # Lower picture bitrate first. A brief Wi-Fi dip must not lock a
             # healthy 60 FPS decoder to 30 FPS for the next minute.
             if self.bad >= 2 and slow_decoder:
                 self.fps = min(self.max_fps, 30)
-            elif self.bad >= 3 and self.bitrate < 1_000_000:
+            elif bandwidth_pressure and self.bad >= 3 and self.bitrate < 1_000_000:
                 self.fps = min(self.max_fps, 30)
         elif loss < .01 and buffer < 40 and decode < 12 and received >= self.fps * .7:
             self.bad = 0
             self.good += 1
             if self.good >= 3:
                 self.good = 0
+                self.buffer_cuts = 0
                 self.bitrate = min(self.max_bitrate, self.bitrate + max(250_000, int(self.bitrate * .15)))
                 if self.bitrate >= 1_250_000: self.fps = self.max_fps
         else:
