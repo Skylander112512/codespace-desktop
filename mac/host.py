@@ -21,13 +21,13 @@ from adaptive import AdaptiveQuality
 from video_quality import select_quality
 from host_settings import load_settings, save_settings
 from text_clipboard import TextClipboard
-from native_audio import NativeAudioTrack, audio_helper_path
+from diagnostics import Diagnostics, numbers
 from PIL import Image, ImageDraw
 from websockets.asyncio.client import connect
 import certifi
 from websockets.exceptions import ConnectionClosed, InvalidStatus
 
-VERSION = '0.2.10'
+VERSION = '0.2.12'
 
 
 class DirectConnect(connect):
@@ -262,10 +262,11 @@ class ScreenTrack(VideoStreamTrack):
 
 
 class Host:
-    def __init__(self,demo=False,native=None):
+    def __init__(self,demo=False,native=None,diagnostics=None):
         self.capture=Capture(demo); self.controls=MacInput(demo)
         self.clipboard=TextClipboard(demo)
         self.audio=None
+        self.diagnostics=diagnostics;self.receiver_report={};self.feedback_at=0;self.sent_sample=None
         self.prefer_native=(not demo) if native is None else native
         self.native=None; self.quality=AdaptiveQuality(); self.on_authenticated=None
         self.pc=None; self.channel=None; self.motion=None; self.ws=None; self.active=False; self.rtc=False
@@ -289,6 +290,7 @@ class Host:
 
     async def end_session(self):
         self.active=False; self.rtc=False
+        self.receiver_report={};self.feedback_at=0;self.sent_sample=None
         tasks=list(self.tasks);self.tasks.clear()
         for task in tasks:task.cancel()
         for task in tasks:
@@ -303,7 +305,7 @@ class Host:
     async def start_session(self):
         await self.end_session(); self.active=True
         print('Viewer connected. Close this window or press Ctrl+C to stop access.',flush=True)
-        await self.send({'type':'status','text':f'Mac host {VERSION} connected. Starting screen capture…','relativeMouse':True,'textTransfer':True,'systemAudio':bool(audio_helper_path())})
+        await self.send({'type':'status','text':f'Mac host {VERSION} connected. Starting screen capture…','relativeMouse':True,'textTransfer':True,'systemAudio':False})
         self.quality=AdaptiveQuality()
         self.tasks={asyncio.create_task(self.relay()),asyncio.create_task(self.negotiate()),asyncio.create_task(self.telemetry())}
 
@@ -313,7 +315,7 @@ class Host:
             pc=RTCPeerConnection(RTCConfiguration(iceServers=servers)); self.pc=pc
             track=ScreenTrack(self.capture)
             if self.prefer_native and helper_path():
-                native=NativeVideoTrack(demo=self.capture.demo)
+                native=NativeVideoTrack(demo=self.capture.demo,diagnostics=bool(self.diagnostics))
                 self.native=native
                 try:
                     await native.start()
@@ -324,9 +326,6 @@ class Host:
                     await native.close(); self.native=None
                     log(f'Hardware capture unavailable ({error}); using software video.')
             sender=pc.addTrack(track); self.sender=sender
-            if audio_helper_path():
-                self.audio=NativeAudioTrack(demo=self.capture.demo)
-                pc.addTrack(self.audio)
             if self.native:
                 codecs=[codec for codec in sender.getCapabilities('video').codecs
                         if codec.mimeType.lower()=='video/h264' and codec.parameters.get('profile-level-id')=='42e01f']
@@ -380,6 +379,9 @@ class Host:
             except (ValueError,TypeError,KeyError):pass
 
     def feedback(self,msg):
+        report=numbers(msg)
+        if report:
+            self.receiver_report=report;self.feedback_at=time.monotonic()
         if self.native and not self.native.failure:
             if msg.get('requestKeyframe') is True:
                 self.native.request_keyframe();return
@@ -398,6 +400,30 @@ class Host:
         except Exception as error:
             await self.send({'type':'sound-status','enabled':False,'error':str(error)})
 
+    async def record_diagnostics(self,metrics):
+        if not self.diagnostics:return
+        now=time.monotonic()
+        values={'encode_ms':metrics.get('encode_ms'),'target_fps':metrics.get('fps'),
+                'bitrate':metrics.get('bitrate'),'native_dropped':metrics.get('dropped'),
+                'queue_frames':self.native.queue.qsize() if self.native else 0}
+        if self.native:values.update(self.native.timing_summary())
+        if self.feedback_at:
+            age=(now-self.feedback_at)*1000;values['feedback_age_ms']=age
+            if age<5000:values.update(self.receiver_report)
+        if self.pc:
+            with contextlib.suppress(Exception):
+                reports=await self.pc.getStats()
+                for report in reports.values():
+                    if report.type=='remote-inbound-rtp' and report.kind=='video':
+                        if report.roundTripTime is not None:values['rtcp_rtt_ms']=report.roundTripTime*1000
+                    if report.type=='outbound-rtp' and report.kind=='video':
+                        sent=report.bytesSent
+                        if self.sent_sample:
+                            before,at=self.sent_sample
+                            if now>at and sent>=before:values['send_mbps']=(sent-before)*8/(now-at)/1e6
+                        self.sent_sample=(sent,now)
+        await asyncio.to_thread(self.diagnostics.sample,values,rtc=self.rtc,audio=bool(self.audio and self.audio.enabled))
+
     async def telemetry(self):
         while self.active:
             await asyncio.sleep(1)
@@ -411,6 +437,7 @@ class Host:
                 await self.send({'type':'status','text':'Hardware video stopped. Using compatibility relay; reconnect to retry.'})
                 await native.close(); self.native=None
             metrics=native.metrics if native and not native.failure else {}
+            await self.record_diagnostics(metrics)
             await self.send({'type':'performance','hardware':bool(metrics),
                 'encode_ms':metrics.get('encode_ms'), 'target_fps':metrics.get('fps',30),
                 'bitrate':metrics.get('bitrate'), 'dropped':metrics.get('dropped',0)})
@@ -476,7 +503,7 @@ class Host:
                                 original=self.native.original_keyframe_handler
                                 await self.native.close(); self.native=None
                                 self.sender._send_keyframe=original
-                                native=NativeVideoTrack(demo=self.capture.demo,max_fps=quality.fps,height=quality.height,bitrate=quality.bitrate)
+                                native=NativeVideoTrack(demo=self.capture.demo,max_fps=quality.fps,height=quality.height,bitrate=quality.bitrate,diagnostics=bool(self.diagnostics))
                                 try:
                                     await native.start()
                                     self.native=native; self.sender.replaceTrack(native); native.bind_sender(self.sender)
@@ -535,6 +562,7 @@ def main():
     parser.add_argument('--demo',action='store_true',help='Synthetic test screen; never reads or controls the real desktop')
     parser.add_argument('--setup',action='store_true',help='Change the saved Codespaces address and Mac host key')
     parser.add_argument('--software',action='store_true',help='Use the original software encoder')
+    parser.add_argument('--diagnostics',action='store_true',help='Record local performance numbers only (no screen or input)')
     parser.add_argument('--native-demo',action='store_true',help='Test hardware encoding with a synthetic screen only')
     args=parser.parse_args()
     if args.native_demo:args.demo=True
@@ -559,8 +587,10 @@ def main():
     url=websocket_url(address)
     if len(key)<32:raise SystemExit('Use the full Mac host key printed by npm start, not the Chromebook code.')
     print('\nStarting foreground remote access. No automatic startup is installed.\n',flush=True)
+    diagnostics=Diagnostics() if args.diagnostics else None
+    if diagnostics:print('Performance diagnostics on. Numbers only; stored locally on this Mac.',flush=True)
     def make_host():
-        agent=Host(args.demo,native=False if args.software else (True if args.native_demo else None))
+        agent=Host(args.demo,native=False if args.software else (True if args.native_demo else None),diagnostics=diagnostics)
         if not args.demo:
             def remember():
                 try:save_settings(address,key)

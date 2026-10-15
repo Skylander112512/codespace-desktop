@@ -101,7 +101,7 @@ function soundButton(){
 }
 function resetSound(){
   soundWanted=false;soundBusy=false;$('audio').muted=true;$('audio').pause();$('audio').srcObject=null;soundButton();
-  $('sound-status').textContent='Sound off. Click Sound when the direct connection is ready.';
+  $('sound-status').textContent=audioAvailable?'Sound off. Click Sound when the direct connection is ready.':'Sound was removed in Mac host 0.2.12 to address lag. Use v0.2.10 if you want sound.';
 }
 function closeRTC(){resetSound();if(document.pointerLockElement===$('screen'))release();if(pc){pc.close();pc=null;}channel=null;motionChannel=null;useRTC=false;peerStartedAt=0;connectedAt=0;decodedSamples=0;healthySince=0;$('video').srcObject=null;$('video').hidden=true;lastVideoAt=0;previousStats=null;nativeStats={};$('performance').textContent='';}
 async function sampleStats(){
@@ -140,7 +140,9 @@ async function sampleStats(){
     const encode=Number.isFinite(nativeStats.encode_ms)?` · ${Math.round(nativeStats.encode_ms)} ms encode`:'';
     $('performance').textContent=useRTC?`${Math.round(fps)} FPS · ${inbound.frameWidth||'?'}×${inbound.frameHeight||'?'} · ${codec} · ${route}${encode} · ${Math.round(decode)} ms decode · ${Math.round(buffer)} ms video buffer`:'Compatibility relay · up to 15 FPS';
     // Avoid interpreting an idle screen as a decoder/bandwidth problem.
-    if((frames>0 || packets+lost>0) && !document.hidden)control({type:'feedback',fps,loss:lost/Math.max(1,packets+lost),decode_ms:decode,buffer_ms:buffer});
+    if((frames>0 || packets+lost>0) && !document.hidden)control({type:'feedback',fps,loss:lost/Math.max(1,packets+lost),decode_ms:decode,buffer_ms:buffer,network_rtt_ms:pair?.currentRoundTripTime*1000,
+      jitter_ms:inbound.jitter*1000,receive_mbps:delta('bytesReceived')*8/elapsed/1e6,
+      processing_ms:frames?delta('totalProcessingDelay')*1000/frames:0,frames_dropped:delta('framesDropped'),freezes:delta('freezeCount')});
   }catch{ /* Stats are optional; video and input continue on older browsers. */ }
   finally{polling=false;}
 }
@@ -224,7 +226,7 @@ function receive(msg){
   if(msg.type==='status'){
     if(msg.relativeMouse===true){relativeMouseAvailable=true;$('game-mouse').disabled=false;}
     if(msg.textTransfer===true){textTransferReady=true;transferButtons();$('transfer-status').textContent='Ready. Text transfers only when you click Send or Get.';}
-    if(msg.systemAudio===true){audioAvailable=true;soundButton();}
+    if(typeof msg.systemAudio==='boolean'){audioAvailable=msg.systemAudio;soundButton();if(!audioAvailable)$('sound-status').textContent='Sound was removed in Mac host 0.2.12 to address lag. Use v0.2.10 if you want sound.';}
     status(msg.text);detail(msg.text);
   }
   if(msg.type==='pong')$('latency').textContent=`${Math.max(0,Math.round(performance.now()-msg.at))} ms control round trip`;

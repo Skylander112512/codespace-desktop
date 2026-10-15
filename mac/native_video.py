@@ -5,6 +5,7 @@ import json
 import sys
 import time
 from fractions import Fraction
+from collections import deque
 from pathlib import Path
 
 import av
@@ -24,7 +25,7 @@ def helper_path():
 
 
 class NativeVideoTrack(VideoStreamTrack):
-    def __init__(self, demo=False, path=None, max_fps=60, compact=False, height=720, bitrate=4_000_000):
+    def __init__(self, demo=False, path=None, max_fps=60, compact=False, height=720, bitrate=4_000_000, diagnostics=False):
         super().__init__()
         self.demo = demo
         self.max_fps = max_fps
@@ -41,6 +42,8 @@ class NativeVideoTrack(VideoStreamTrack):
         self.last_keyframe_request = 0
         self.last_pts = -1
         self.metrics = {}
+        self.frame_timings = deque(maxlen=600) if diagnostics else None
+        self.last_arrival = None
         self.settings = {'bitrate': bitrate, 'fps': max_fps}
         self.dropped = 0
 
@@ -102,6 +105,11 @@ class NativeVideoTrack(VideoStreamTrack):
         if not payload.startswith(b'\x00\x00\x00\x01'):
             raise ValueError('Native frame is not Annex B H.264')
         self.last_pts = pts
+        if self.frame_timings is not None:
+            now=time.monotonic()
+            gap=(now-self.last_arrival)*1000 if self.last_arrival is not None else 0
+            self.last_arrival=now
+            self.frame_timings.append((now,gap,float(header.get('encode_ms',0)),bool(header.get('keyframe')),len(payload)))
         if self.queue.full():
             self.dropped += self.queue.qsize()
             while not self.queue.empty():
@@ -118,6 +126,20 @@ class NativeVideoTrack(VideoStreamTrack):
         packet.is_keyframe = bool(header.get('keyframe'))
         self.metrics = {**header, 'dropped': self.dropped, **self.settings}
         self.queue.put_nowait(packet)
+
+    def timing_summary(self):
+        if self.frame_timings is None:return {}
+        since=time.monotonic()-2
+        frames=[item for item in self.frame_timings if item[0]>=since]
+        if not frames:return {}
+        keys=[item for item in frames if item[3]]
+        gaps=sorted(item[1] for item in frames)
+        return {'capture_fps':len(frames)/2,'frame_gap_max_ms':max(gaps),
+                'frame_gap_p95_ms':gaps[min(len(gaps)-1,int(len(gaps)*.95))],
+                'encode_max_ms':max(item[2] for item in frames),
+                'keyframe_encode_max_ms':max((item[2] for item in keys),default=0),
+                'keyframe_bytes_max':max((item[4] for item in keys),default=0),
+                'keyframes':len(keys), 'capture_skipped':self.metrics.get('skipped',0)}
 
     async def _frames(self):
         try:

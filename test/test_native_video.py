@@ -5,7 +5,7 @@ import sys
 import time
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).parents[1] / 'mac'))
 import av
@@ -27,6 +27,26 @@ class QueueTests(unittest.IsolatedAsyncioTestCase):
         track._accept({'pts': 4, 'keyframe': True}, nal)
         self.assertEqual((await track.recv()).pts, 4)
         await track.close()
+
+    async def test_timing_is_opt_in_and_expires_without_retaining_pixels(self):
+        ordinary=NativeVideoTrack()
+        self.assertIsNone(ordinary.frame_timings)
+        self.assertEqual(ordinary.timing_summary(),{})
+        track=NativeVideoTrack(diagnostics=True)
+        nal=b'\x00\x00\x00\x01\x65'
+        with patch('native_video.time.monotonic',return_value=10):
+            track._accept({'pts':1,'keyframe':True,'encode_ms':7,'skipped':3},nal)
+        with patch('native_video.time.monotonic',return_value=10.02):
+            track._accept({'pts':2,'keyframe':False,'encode_ms':4,'skipped':3},nal)
+            sample=track.timing_summary()
+            self.assertAlmostEqual(sample['frame_gap_max_ms'],20)
+            self.assertEqual(sample['keyframe_encode_max_ms'],7)
+            self.assertEqual(sample['keyframe_bytes_max'],len(nal))
+            self.assertEqual(sample['capture_skipped'],3)
+        self.assertTrue(all(isinstance(value,(int,float,bool)) for row in track.frame_timings for value in row))
+        self.assertEqual(track.frame_timings.maxlen,600)
+        with patch('native_video.time.monotonic',return_value=13):self.assertEqual(track.timing_summary(),{})
+        await track.close();await ordinary.close()
 
     async def test_invalid_or_reversed_native_frames_are_rejected(self):
         track = NativeVideoTrack()
