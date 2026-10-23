@@ -84,7 +84,7 @@ test('a queued JPEG does not close the viewer when a pong follows it', async t=>
 
 test('health endpoint identifies the deployed version without exposing credentials',async t=>{
   const {base}=await fixture(t);
-  assert.deepEqual(await (await fetch(base+'/health')).json(),{app:'codespace-desktop',version:'0.2.12'});
+  assert.deepEqual(await (await fetch(base+'/health')).json(),{app:'codespace-desktop',version:'0.2.13'});
 });
 
 
@@ -124,4 +124,25 @@ test('localhost rewrite is rejected when Codespaces proxy support is not configu
     const ws=new WebSocket(base.replace('http','ws')+'/ws',{origin:`${protocol}://localhost:3000`,headers:{Host:'localhost:3000','X-Forwarded-Host':'example-3000.app.github.dev'}});
     const [error]=await once(ws,'error');assert.match(error.message,/403/);
   }
+});
+
+test('independent fork servers keep keys, origins and peer messages separate',async t=>{
+  const first=await fixture(t,{hostKey:'a'.repeat(43),viewerKey:'b'.repeat(43),publicOrigin:'https://first-fork-3000.app.github.dev'});
+  const second=await fixture(t,{hostKey:'c'.repeat(43),viewerKey:'d'.repeat(43),publicOrigin:'https://second-fork-3000.app.github.dev'});
+  const rejected=await second.client('host','a'.repeat(43));
+  assert.equal((await once(rejected.ws,'close'))[0],4003);
+  const hostA=await first.client('host','a'.repeat(43));
+  const viewerA=await first.client('viewer','b'.repeat(43));
+  const hostB=await second.client('host','c'.repeat(43));
+  const viewerB=await second.client('viewer','d'.repeat(43));
+  await until(()=>hostA.messages.some(m=>m.type==='viewer-ready') && hostB.messages.some(m=>m.type==='viewer-ready'));
+  viewerA.ws.send(JSON.stringify({type:'ping',at:101}));
+  viewerB.ws.send(JSON.stringify({type:'ping',at:202}));
+  await until(()=>hostA.messages.some(m=>m.at===101) && hostB.messages.some(m=>m.at===202));
+  assert.ok(!hostA.messages.some(m=>m.at===202));
+  assert.ok(!hostB.messages.some(m=>m.at===101));
+  const crossOrigin=new WebSocket(second.base.replace('http','ws')+'/ws',{origin:'https://first-fork-3000.app.github.dev'});
+  const [error]=await once(crossOrigin,'error');assert.match(error.message,/403/);
+  hostA.ws.close();await once(hostA.ws,'close');
+  assert.equal(hostB.ws.readyState,WebSocket.OPEN);
 });

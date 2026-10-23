@@ -1,4 +1,4 @@
-Codespace Desktop 0.2.12 — Apple Silicon Mac / macOS 14+
+Codespace Desktop 0.2.13 — Apple Silicon Mac / macOS 14+
 
 Keep these files together. Open Start Mac Host.command.
 
@@ -9,7 +9,26 @@ If Codespaces is off, this host waits and retries (up to once per minute).
 Later, start the same Codespace and npm start; keep port 3000 Public.
 The Mac connects on its next retry. It cannot start Codespaces for you.
 No screen video is captured while waiting for a viewer. Ctrl+C stops retries.
-Open Change Connection.command if your Codespace address or host key changes.
+Automatic backup Codespaces / different accounts (0.2.13):
+Open Add Codespace.command to save another Codespace's viewer/editor address
+and its own Mac host key. It may be offline. Adding it does not interrupt a
+running host. The current pairing and earlier backups are retained privately.
+When disconnected, this host tries saved Codespaces one at a time. When one
+connects it stops checking the others, even while waiting for your Chromebook.
+Only one connection and one video session are used. If it disconnects, it tries
+alternatives; if all are unavailable, checks slow down to once per minute.
+No screen capture runs during the search. The last successful Codespace is
+preferred on future launches. The original can be stopped or out of hours.
+An editor URL defaults to viewer port 3000. Paste the exact public viewer URL
+if using a different port. Each server needs npm start running and its port Public.
+Choose Codespace.command can prefer one saved connection on the first attempt.
+Stop the old host before starting a replacement; don't leave two hosts open.
+Change Connection.command allows entering a new URL or replacing a host key.
+A rejected host key is skipped; correct it with Add Codespace.command.
+To use the same viewer code in both Codespaces, run npm run set-code in each
+and choose the same code, then restart each server when convenient. A fork
+doesn't copy private keys or code hashes. The Mac can't find a new, unsaved
+Codespace just from your code, or start a stopped Codespace for you.
 
 On the Chromebook, open the Codespaces viewer and enter your chosen code.
 Set your own code once by running npm run set-code in Codespaces.

@@ -11,15 +11,16 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from fractions import Fraction
-from urllib.parse import urlsplit
 
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCConfiguration, RTCIceServer, VideoStreamTrack
 from av import VideoFrame
 from native_video import NativeVideoTrack, helper_path
-from reconnect import keep_connected, ConnectionProblem
+from reconnect import keep_available, ConnectionProblem
 from adaptive import AdaptiveQuality
 from video_quality import select_quality
-from host_settings import load_settings, save_settings
+from host_settings import load_settings, load_connections, save_settings, save_backup
+from connection_address import viewer_address, websocket_url
+from connection_setup import select_connection
 from text_clipboard import TextClipboard
 from diagnostics import Diagnostics, numbers
 from PIL import Image, ImageDraw
@@ -27,7 +28,8 @@ from websockets.asyncio.client import connect
 import certifi
 from websockets.exceptions import ConnectionClosed, InvalidStatus
 
-VERSION = '0.2.12'
+VERSION = '0.2.13'
+AUTH_TIMEOUT = 10
 
 
 class DirectConnect(connect):
@@ -477,18 +479,24 @@ class Host:
 
     async def run(self,url,key):
         watchdog=asyncio.create_task(self.watchdog())
+        auth_guard=None
         try:
             tls=ssl.create_default_context(cafile=certifi.where()) if url.startswith('wss:') else None
             # A private Codespaces port redirects to GitHub sign-in. A standalone
             # host cannot use the browser's login; report that instead of following it.
-            async with DirectConnect(url,ssl=tls,max_size=256*1024,max_queue=8,compression=None,ping_interval=15,ping_timeout=30) as ws:
+            async with DirectConnect(url,ssl=tls,max_size=256*1024,max_queue=8,compression=None,ping_interval=15,ping_timeout=30,open_timeout=8) as ws:
                 self.ws=ws
+                async def auth_deadline():
+                    await asyncio.sleep(AUTH_TIMEOUT)
+                    await ws.close(4001,'Host authentication timed out')
+                auth_guard=asyncio.create_task(auth_deadline())
                 await self.send({'type':'auth','role':'host','key':key})
                 async for raw in ws:
                     if not isinstance(raw,str):continue
                     msg=json.loads(raw)
                     kind=msg.get('type')
                     if kind=='authenticated':
+                        auth_guard.cancel()
                         if self.on_authenticated:self.on_authenticated()
                         self.ice_servers=msg.get('iceServers',[])
                         print('Connected to your server. Waiting for your Chromebook.',flush=True)
@@ -542,29 +550,30 @@ class Host:
             reason=close.reason if close else 'Network connection lost'
             raise ConnectionProblem(f'Connection closed ({code}): {reason}.',retryable=code!=4003) from None
         finally:
+            if auth_guard:
+                auth_guard.cancel()
+                with contextlib.suppress(asyncio.CancelledError):await auth_guard
             watchdog.cancel()
             with contextlib.suppress(asyncio.CancelledError):await watchdog
             await self.end_session();self.capture.close();self.ws=None
 
 
-def websocket_url(value):
-    parsed=urlsplit(value.strip())
-    local=parsed.hostname in ('localhost','127.0.0.1','::1')
-    if parsed.scheme not in ('https','http') or not parsed.hostname or parsed.username or parsed.password:
-        raise ValueError('Enter an https:// viewer address.')
-    if parsed.scheme=='http' and not local:raise ValueError('Remote connections require HTTPS.')
-    if parsed.path not in ('','/') or parsed.query or parsed.fragment:raise ValueError('Use the viewer address without extra paths or parameters.')
-    return ('wss' if parsed.scheme=='https' else 'ws')+'://'+parsed.netloc+'/ws'
-
-
 def main():
     parser=argparse.ArgumentParser(description='Codespace Desktop Mac host')
     parser.add_argument('--demo',action='store_true',help='Synthetic test screen; never reads or controls the real desktop')
-    parser.add_argument('--setup',action='store_true',help='Change the saved Codespaces address and Mac host key')
+    connection_options=parser.add_mutually_exclusive_group()
+    connection_options.add_argument('--setup',action='store_true',help='Pair another Codespace or update its saved host key')
+    connection_options.add_argument('--add',action='store_true',help='Save a backup Codespace without changing the running connection')
+    connection_options.add_argument('--choose',action='store_true',help='Choose a previously paired Codespace without retyping its key')
     parser.add_argument('--software',action='store_true',help='Use the original software encoder')
     parser.add_argument('--diagnostics',action='store_true',help='Record local performance numbers only (no screen or input)')
     parser.add_argument('--native-demo',action='store_true',help='Test hardware encoding with a synthetic screen only')
     args=parser.parse_args()
+    if args.add:
+        address,key=select_connection(None,[],setup=True)
+        save_backup(address,key)
+        print('Backup saved privately. The running host is unchanged. Hosts 0.2.13+ check saved alternatives when disconnected.')
+        return
     if args.native_demo:args.demo=True
     print(f'\nCodespace Desktop — Mac host {VERSION}\nLeave this window open. It waits for Codespaces and reconnects automatically.\nCtrl+C stops access.\n')
     if not args.demo:
@@ -576,30 +585,40 @@ def main():
             raise SystemExit(1)
         if hasattr(Quartz, 'CGPreflightPostEventAccess') and not Quartz.CGPreflightPostEventAccess():
             print('Keyboard/mouse permission is OFF. Video can still work. Enable this host / Terminal in System Settings → Privacy & Security → Accessibility, then restart the host.\n')
-    saved=None if args.demo or args.setup else load_settings()
-    if saved:
-        address=saved['url'];key=saved['key']
-        print(f'Reconnecting to {address}\nTo change the saved connection, start with --setup.',flush=True)
+    if args.demo:
+        print('Synthetic test connection.')
+        address=viewer_address(input('Codespaces viewer URL: '))
+        key=getpass.getpass('Mac host key (hidden): ').strip()
     else:
-        print('One-time Mac setup. Future launches will connect automatically.' if not args.demo else 'Synthetic test connection.')
-        address=input('Codespaces viewer URL: ').strip()
-        key=getpass.getpass('Mac host key (hidden; saved only on this Mac): ').strip()
+        entries=load_connections()
+        saved=load_settings() or (entries[0] if entries else None)
+        address,key=select_connection(saved,entries,setup=args.setup,choose=args.choose)
     url=websocket_url(address)
     if len(key)<32:raise SystemExit('Use the full Mac host key printed by npm start, not the Chromebook code.')
     print('\nStarting foreground remote access. No automatic startup is installed.\n',flush=True)
     diagnostics=Diagnostics() if args.diagnostics else None
     if diagnostics:print('Performance diagnostics on. Numbers only; stored locally on this Mac.',flush=True)
-    def make_host():
+    preferred={'url':address,'key':key}
+    first_round=True
+    def candidates():
+        nonlocal first_round
+        entries=load_connections()
+        if first_round:
+            first_round=False
+            return [preferred]+[entry for entry in entries if entry['url']!=address]
+        return entries if any(entry['url']==address for entry in entries) else entries+[preferred]
+    def make_host(entry=None):
+        entry=entry or preferred
         agent=Host(args.demo,native=False if args.software else (True if args.native_demo else None),diagnostics=diagnostics)
         if not args.demo:
             def remember():
-                try:save_settings(address,key)
+                try:save_settings(entry['url'],entry['key'])
                 except OSError:log('Could not save this connection; setup will be needed next launch.')
             agent.on_authenticated=remember
         return agent
     # Demo CLI remains a single connection for deterministic automated tests.
     if args.demo:asyncio.run(make_host().run(url,key))
-    else:asyncio.run(keep_connected(make_host,url,key,log=log))
+    else:asyncio.run(keep_available(make_host,candidates,log=log))
 
 
 
