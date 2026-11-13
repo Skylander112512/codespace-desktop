@@ -12,7 +12,9 @@ export function setupLaunch(win=window, doc=document){
   };
   let inWrapper=false;
   try{inWrapper=win.parent!==win && win.parent.location.href==='about:blank' && win.parent.document.getElementById('desktop-viewer')?.contentWindow===win;}catch{}
-  if(inWrapper){showViewer();return;}
+  // Installed windows go straight to the existing login; normal tabs keep
+  // their original launch choices. The hash carries no credentials.
+  if(inWrapper || win.matchMedia?.('(display-mode: standalone)').matches || win.location.hash==='#app'){showViewer();return;}
   doc.getElementById('login').hidden=true;
   doc.getElementById('connection-details').hidden=true;
   choice.hidden=false;

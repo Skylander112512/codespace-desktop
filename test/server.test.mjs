@@ -20,6 +20,29 @@ async function fixture(t, options={}){
 }
 async function until(fn){for(let n=0;n<100;n++){if(fn())return;await new Promise(r=>setTimeout(r,10));}assert.fail('Timed out waiting for protocol event');}
 
+test('install manifest and icons use the current origin without cached credentials',async t=>{
+  const {base}=await fixture(t);
+  const response=await fetch(base+'/app.webmanifest');
+  assert.equal(response.status,200);
+  assert.match(response.headers.get('content-type'),/application\/manifest\+json/);
+  assert.equal(response.headers.get('cache-control'),'no-store');
+  const manifest=await response.json();
+  assert.equal(manifest.display,'standalone');assert.equal(manifest.scope,'/');
+  assert.equal(manifest.start_url,'/#app');assert.equal(manifest.id,'/');
+  for(const icon of manifest.icons){
+    const response=await fetch(base+icon.src);assert.equal(response.status,200);
+    assert.equal(response.headers.get('content-type'),'image/png');
+    const bytes=Buffer.from(await response.arrayBuffer());
+    assert.equal(bytes.subarray(1,4).toString(),'PNG');
+    const size=Number(icon.sizes.split('x')[0]);
+    assert.equal(bytes.readUInt32BE(16),size);assert.equal(bytes.readUInt32BE(20),size);
+  }
+  assert.equal((await fetch(base+'/install.js')).status,200);
+  const html=await (await fetch(base)).text();
+  assert.match(html,/rel="manifest" href="\/app.webmanifest"/);
+  assert.match(html,/src="\/client.js"/);
+});
+
 test('keys, secrets and unknown paths never appear in HTTP responses',async t=>{
   const {base}=await fixture(t);
   for(const path of ['/.secrets.json','/../server.mjs','/mac/host.py'])assert.equal((await fetch(base+path)).status,404);
@@ -84,7 +107,7 @@ test('a queued JPEG does not close the viewer when a pong follows it', async t=>
 
 test('health endpoint identifies the deployed version without exposing credentials',async t=>{
   const {base}=await fixture(t);
-  assert.deepEqual(await (await fetch(base+'/health')).json(),{app:'codespace-desktop',version:'0.2.13'});
+  assert.deepEqual(await (await fetch(base+'/health')).json(),{app:'codespace-desktop',version:'0.3.0-app.1'});
 });
 
 

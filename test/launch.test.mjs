@@ -15,6 +15,19 @@ function fixture(){
   return {win,doc,get,popup,shell,redirects,opens,timers};
 }
 
+test('installed window and app launch hash open the existing login without a popup',()=>{
+  for(const standalone of [true,false]){
+    const f=fixture();
+    f.win.matchMedia=()=>({matches:standalone});
+    if(!standalone)f.win.location.hash='#app';
+    setupLaunch(f.win,f.doc);
+    assert.equal(f.get('tab-choice').hidden,true);
+    assert.equal(f.get('login').hidden,false);
+    assert.equal(f.get('connection-details').hidden,false);
+    assert.deepEqual(f.opens,[]);assert.deepEqual(f.redirects,[]);
+  }
+});
+
 test('stay in current tab shows login without opening or navigating anywhere',()=>{
   const f=fixture();setupLaunch(f.win,f.doc);
   assert.equal(f.get('login').hidden,true);

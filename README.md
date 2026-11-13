@@ -1,5 +1,7 @@
 # Codespace Desktop
 
+> **Experimental app branch · v0.3.0-app.1:** optionally install the existing viewer as a Chromebook app. Codespaces and the normal website still work as before. See [installation and rollback instructions](EXPERIMENTAL-APP.md). This does not claim lower streaming latency. The [stable v0.2.13 release](https://github.com/Skylander112512/codespace-desktop/releases/tag/v0.2.13) remains available, and its Mac host works with this app.
+
 Control your Mac from a Chromebook browser using a GitHub Codespaces project. No Chromebook app, extension, Linux environment, or local installation is needed. The server runs **inside Codespaces**, and you open its forwarded browser page to control your Mac.
 
 This is a working prototype, not a signed commercial remote-desktop product. It includes a Mac host, browser viewer, authenticated signaling server, and a compatibility video relay. It must still be tested on your actual Mac/Chromebook networks.

@@ -19,6 +19,10 @@ export function createDesktopServer({hostKey, viewerKey, viewerCode, iceServers 
     ['/cloak-icon.svg', ['public/cloak-icon.svg','image/svg+xml']],
     ['/video-quality.js', ['public/video-quality.js','text/javascript; charset=utf-8']],
     ['/style.css', ['public/style.css','text/css; charset=utf-8']],
+    ['/install.js', ['public/install.js','text/javascript; charset=utf-8']],
+    ['/app.webmanifest', ['public/app.webmanifest','application/manifest+json']],
+    ['/app-192.png', ['public/app-192.png','image/png']],
+    ['/app-512.png', ['public/app-512.png','image/png']],
   ]);
   const server = http.createServer((req, res) => {
     const headers = {'Cache-Control':'no-store', 'X-Content-Type-Options':'nosniff', 'Referrer-Policy':'no-referrer',
@@ -26,7 +30,7 @@ export function createDesktopServer({hostKey, viewerKey, viewerCode, iceServers 
     const asset = assets.get(req.url);
     if (req.method === 'GET' && req.url === '/health') {
       res.writeHead(200, {...headers, 'Content-Type':'application/json'});
-      res.end(JSON.stringify({app:'codespace-desktop',version:'0.2.13'})); return;
+      res.end(JSON.stringify({app:'codespace-desktop',version:'0.3.0-app.1'})); return;
     }
     if (req.method !== 'GET' || !asset) { res.writeHead(404, headers); res.end('Not found'); return; }
     res.writeHead(200, {...headers, 'Content-Type':asset[1]});
@@ -97,7 +101,7 @@ export function createDesktopServer({hostKey, viewerKey, viewerCode, iceServers 
         if (peers[candidate]) { ws.close(4009,`${candidate} already connected`); return; }
         clearTimeout(deadline); role=candidate; peers[role]=ws;
         log(`${role} authenticated`);
-        send(ws,{type:'authenticated',role,iceServers,version:'0.2.13'});
+        send(ws,{type:'authenticated',role,iceServers,version:'0.3.0-app.1'});
         if (peers.host && peers.viewer) {
           send(peers.viewer,{type:'host-ready'});
           send(peers.host,{type:'viewer-ready'});
